@@ -1,4 +1,5 @@
 import customtkinter as ctk
+from ui.window_new_project import NewProjectWindow
 from ui.widget_project_list import ProjectListWidget
 
 class ViewTD(ctk.CTkFrame):
@@ -63,6 +64,9 @@ class ViewTD(ctk.CTkFrame):
             pass
 
     def abrir_wizard_proyecto(self):
-        """Callback temporal hasta que integremos la vista de creacion de proyectos"""
-        self.actualizar_estado_callback("Modulo de creacion en desarrollo (Revisar Issue en GitHub).", "yellow")
-        print("Log: Se solicito abrir el Wizard de Proyecto.")
+        """Abre la ventan modal para inicializar un proyecto nuevo."""
+        NewProjectWindow(
+            parent=self,
+            nextcloud_dir=self.nextcloud_dir,
+            on_success_callback=self.lista_proyectos.cargar_proyectos
+        )
