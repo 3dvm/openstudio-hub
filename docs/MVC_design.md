@@ -1,0 +1,16 @@
+📦 MACUARE HUB (App)
+ ┣ 📂 UI (Vistas / CustomTkinter)
+ ┃ ┣ 📜 view_login.py         (Pide email/pass de Kitsu)
+ ┃ ┣ 📜 view_artist.py        (Panel de artista - Muestra solo proyectos listos)
+ ┃ ┣ 📜 view_td.py            (Panel TD - Botón "Nuevo Proyecto" y admin)
+ ┃ ┗ 📜 widget_project_list.py (Componente UI reutilizable para listar proyectos)
+ ┃
+ ┣ 📂 CORE (Lógica de Negocio)
+ ┃ ┣ 📜 auth_manager.py       (Habla con la API de Kitsu y valida el Token SSO)
+ ┃ ┣ 📜 vault_manager.py      (Guarda la clave SVN estrictamente en RAM por seguridad)
+ ┃ ┣ 📜 project_builder.py    (Wizard para inicializar estructura de directorios)
+ ┃ ┗ 📜 env_launcher.py       (Inyecta variables de entorno y lanza binarios de Blender)
+ ┃
+ ┗ 📂 DATA (Modelos)
+   ┣ 📜 local_session.json    (Guarda el token de Kitsu en el disco local ~/.macuare)
+   ┗ 📜 project_config.json   (El "ADN" del proyecto que vive en el Nextcloud)
