@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 from re import template
 
@@ -6,7 +7,7 @@ class ProjectBuilder:
     def __init__(self, nextcloud_dir: Path):
         self.base_dir = nextcloud_dir
 
-    def create_project(self, project_name: str, blender_version: str, dependencies: dict, project_template: str) -> tuple[bool, str]:
+    def create_project(self, project_name: str, blender_version: str, dependencies: dict, project_template: str, splash_image_path: str = "") -> tuple[bool, str]:
         """
         Genera el árbol de directorios para un nuevo proyecto en Nextcloud,
         escribe el archivo .nextcloudignore por seguridad, y deja el Payload (Semilla).
@@ -60,6 +61,13 @@ class ProjectBuilder:
             
             with open(payload_file, 'w', encoding='utf-8') as f:
                 json.dump(payload_data, f, indent=4)
+
+            # === NUEVO: COPIAR EL SPLASH SCREEN ===
+            if splash_image_path:
+                splash_source = Path(splash_image_path)
+                if splash_source.exists() and splash_source.is_file():
+                    destino_splash = project_path / "05_config_estudio" / "splash.png"
+                    shutil.copy(splash_source, destino_splash)
 
             return True, f"Proyecto '{folder_name}' inicializado. Esperando instalación en clientes."
 

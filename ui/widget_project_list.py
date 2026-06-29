@@ -4,15 +4,20 @@ import customtkinter as ctk
 from pathlib import Path
 from core.env_launcher import lanzar_blender
 from core.local_installer import LocalInstaller
+from ui.window_svn_login import SVNLoginWindow
 
 class ProjectListWidget(ctk.CTkScrollableFrame):
-    def __init__(self, parent, nextcloud_dir, status_callback, **kwargs):
+    def __init__(self, parent, nextcloud_dir, vault_manager, status_callback, **kwargs):
         """
         Componente reutilizable que escanea, verifica el estado de instalacion
         y despliega la lista de proyectos con acciones contextuales (Instalar o Abrir).
+        También verifica las credenciales en RAM antes de proceder.
         """
         super().__init__(parent, **kwargs)
         self.nextcloud_dir = nextcloud_dir
+        
+        # === INYECCION DE LA BOVEDA ===
+        self.vault = vault_manager
         self.status_callback = status_callback
         
         # Inicializamos el motor de instalacion local
@@ -100,14 +105,35 @@ class ProjectListWidget(ctk.CTkScrollableFrame):
         btn.pack(pady=5, fill="x", padx=10)
 
     def iniciar_proyecto_hilo(self, project_root: Path, config_path: Path):
+        # === INTERCEPTOR JIT PARA ABRIR ===
+        if not self.vault.has_svn_credentials():
+            SVNLoginWindow(
+                parent=self.winfo_toplevel(),
+                vault_manager=self.vault,
+                on_success_callback=lambda: self.iniciar_proyecto_hilo(project_root, config_path)
+            )
+            return
+
+        # Extraemos credenciales completas de la RAM para inyectarlas a Blender
+        svn_user, svn_pwd = self.vault.get_svn_credentials()
+        kitsu_user, kitsu_pwd = self.vault.get_kitsu_credentials()
+
         threading.Thread(
             target=lanzar_blender, 
-            args=(project_root, config_path, self.status_callback), 
+            args=(project_root, config_path, svn_user, svn_pwd, kitsu_user, kitsu_pwd, self.status_callback), 
             daemon=True
         ).start()
 
     def ejecutar_instalacion_hilo(self, project_root: Path):
-        """Dispara la instalacion en un hilo secundario para mantener la UI responsiva."""
+        # === INTERCEPTOR JIT PARA INSTALAR ===
+        if not self.vault.has_svn_credentials():
+            SVNLoginWindow(
+                parent=self.winfo_toplevel(),
+                vault_manager=self.vault,
+                on_success_callback=lambda: self.ejecutar_instalacion_hilo(project_root)
+            )
+            return
+
         threading.Thread(
             target=self._hilo_instalacion, 
             args=(project_root,), 
@@ -115,7 +141,10 @@ class ProjectListWidget(ctk.CTkScrollableFrame):
         ).start()
 
     def _hilo_instalacion(self, project_root: Path):
-        exito, mensaje = self.installer.instalar_entorno(project_root, self.status_callback)
+        # Extraemos las claves de la RAM para que el motor haga el checkout silencioso
+        svn_user, svn_pwd = self.vault.get_svn_credentials()
+        
+        exito, mensaje = self.installer.instalar_entorno(project_root, svn_user, svn_pwd, self.status_callback)
         
         if exito:
             self.status_callback(mensaje, "green")

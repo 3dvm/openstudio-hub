@@ -2,9 +2,17 @@ import threading
 import customtkinter as ctk
 
 class ViewLogin(ctk.CTkFrame):
-    def __init__(self, parent, auth_manager, on_login_success):
+    def __init__(self, parent, auth_manager, vault_manager, on_login_success):
+        """
+        Vista modular para el inicio de sesion.
+        parent: Ventana principal (Tk o CTk)
+        auth_manager: Instancia del nucleo de autenticacion
+        vault_manager: Gestor de credenciales criticas en RAM (Boveda)
+        on_login_success: Callback para avisar a la app que el login fue correcto
+        """
         super().__init__(parent, fg_color="transparent")
         self.auth = auth_manager
+        self.vault = vault_manager
         self.on_success = on_login_success
 
 
@@ -34,6 +42,7 @@ class ViewLogin(ctk.CTkFrame):
         self.btn_login.pack(pady=20, padx=30, fill="x")
 
     def ejecutar_login(self):
+        """Valida campos locales y delega el proceso a un hilo secundario."""
         host = self.entry_host.get().strip()
         email = self.entry_email.get().strip()
         password = self.entry_pass.get().strip()
@@ -45,11 +54,17 @@ class ViewLogin(ctk.CTkFrame):
         self.btn_login.configure(state="disabled", text="Conectando...")
         self.lbl_error.configure(text="")
 
+        # Hilo secundario para no congelar la ventana mientras se habla con la API
         threading.Thread(target=self._hilo_login, args=(email, password, host), daemon=True).start()
 
     def _hilo_login(self, email, password, host):
         exito, mensaje = self.auth.login_with_credentials(email, password, host)
         if exito:
+            # === CAPTURA EN RAM ===
+            # Almacenamos de forma segura el email y password validados en la boveda volatil
+            self.vault.save_kitsu_credentials(email, password)
+            
+            # Notificar de vuelta al controlador principal (macuare_hub.py)
             self.on_success()
         else:
             self.btn_login.configure(state="normal", text="Iniciar Sesion")

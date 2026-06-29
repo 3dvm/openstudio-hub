@@ -45,9 +45,12 @@ class MacuareHub(ctk.CTk):
         """Monta la vista de Login inyectando dependencias."""
         self.limpiar_pantalla()
         
+        # === INYECCION DE VAULT_MANAGER ===
+        # Pasamos el gestor de RAM para capturar la contrasena en caliente
         vista_login = ViewLogin(
             parent=self, 
             auth_manager=self.auth, 
+            vault_manager=self.vault, 
             on_login_success=self.mostrar_dashboard
         )
         vista_login.pack(fill="both", expand=True)
@@ -63,13 +66,15 @@ class MacuareHub(ctk.CTk):
                 parent=self, 
                 auth_manager=self.auth, 
                 nextcloud_dir=NEXTCLOUD_DIR, 
+                vault_manager=self.vault,
                 on_logout=self.ejecutar_logout
             )
         else:
             vista = ViewArtist(
                 parent=self, 
                 auth_manager=self.auth, 
-                nextcloud_dir=NEXTCLOUD_DIR, 
+                nextcloud_dir=NEXTCLOUD_DIR,
+                vault_manager=self.vault,
                 on_logout=self.ejecutar_logout
             )
         
@@ -78,7 +83,7 @@ class MacuareHub(ctk.CTk):
     def ejecutar_logout(self):
         """Limpia el estado global y devuelve al usuario al inicio."""
         self.auth.logout()
-        self.vault.clear()  # Vaciamos la clave SVN de la RAM por seguridad
+        self.vault.clear()  # Vaciamos de forma absoluta la RAM por seguridad
         self.mostrar_login()
 
 if __name__ == "__main__":

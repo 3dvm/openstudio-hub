@@ -1,5 +1,6 @@
 import json
 import customtkinter as ctk
+from customtkinter import filedialog
 from pathlib import Path
 from core.project_builder import ProjectBuilder
 
@@ -7,7 +8,9 @@ class NewProjectWindow(ctk.CTkToplevel):
     def __init__(self, parent, nextcloud_dir, on_success_callback):
         super().__init__(parent)
         self.title("Nuevo Proyecto")
-        self.geometry("450x620") # Agrandamos un poco mas para el nuevo selector
+        self.geometry("450x690") # Agrandamos un poco mas para el nuevo selector
+
+        self.ruta_splash = ""
         self.resizable(False, False)
         
         self.transient(parent)
@@ -62,12 +65,41 @@ class NewProjectWindow(ctk.CTkToplevel):
         if versiones:
             self.dibujar_addons_dinamicos(self.combo_version.get())
 
+        lbl_splash = ctk.CTkLabel(self, text="Splash Screen Personalizado(1000x500px):")
+        lbl_splash.pack( pady=(10,0) )
+
+        frame_splash = ctk.CTkFrame(self, fg_color="transparent")
+        frame_splash.pack(pady=5, fill="x", padx=50)
+
+        self.btn_splash = ctk.CTkButton(
+                frame_splash,
+                text="Buscar PNG",
+                command=self.seleccionar_splash,
+                width=120,
+                fg_color="#4F46E5",
+                hover_color="#4338CA"
+        )
+        self.btn_splash.pack( side="left", padx=(0,10) )
+
+        self.lbl_splash_name = ctk.CTkLabel(frame_splash, text="Ninguna imagen", text_color="gray")
+        self.lbl_splash_name.pack(side="left", fill="x", expand=True)
+
         # Feedback y Boton
         self.lbl_status = ctk.CTkLabel(self, text="", text_color="red")
         self.lbl_status.pack(pady=10)
 
         self.btn_crear = ctk.CTkButton(self, text="Generar Proyecto", command=self.ejecutar_creacion)
         self.btn_crear.pack(pady=10)
+
+    def seleccionar_splash(self):
+        ruta = filedialog.askopenfilename(
+            title="Seleccionar Splash Screen del Proyecto",
+            filetypes=[("Imágenes PNG", "*.png")]
+        )
+        if ruta:
+            self.ruta_splash = ruta
+            nombre_archivo = Path(ruta).name
+            self.lbl_splash_name.configure(text=nombre_archivo, text_color="white")
 
     def _cargar_manifestos(self) -> dict:
         data = {}
@@ -136,9 +168,8 @@ class NewProjectWindow(ctk.CTkToplevel):
 
         self.btn_crear.configure(state="disabled", text="Creando...")
         self.lbl_status.configure(text="Generando estructura en Nextcloud...", text_color="yellow")
-        
-        # FIRMA ACTUALIZADA: Pasamos el template como cuarto argumento
-        exito, mensaje = self.builder.create_project(nombre, version, dependencias_finales, template)
+
+        exito, mensaje = self.builder.create_project(nombre, version, dependencias_finales, template, self.ruta_splash)
 
         if exito:
             self.lbl_status.configure(text=mensaje, text_color="green")
