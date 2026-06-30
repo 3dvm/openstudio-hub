@@ -145,7 +145,4 @@ pyinstaller --noconsole --onefile --name "Macuare Hub" macuare_hub.py
 
 *Developed by [Ernesto Del Valle M.] - Pipeline TD & Technical Artist.*
 
-
-¡Con este README el reclutador sabrá instantáneamente de qué va todo el proyecto sin siquiera tener que leer el código!
-
 ```
