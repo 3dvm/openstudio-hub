@@ -57,6 +57,7 @@ class ViewTD(ctk.CTkFrame):
         self.lista_proyectos = ProjectListWidget(
             parent=self,
             nextcloud_dir=self.nextcloud_dir,
+            auth_manager=self.auth,
             vault_manager=vault_manager,
             status_callback=self.actualizar_status,
             width=550,

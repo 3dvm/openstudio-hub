@@ -1,11 +1,10 @@
-# import os
 import json
 import gazu
 from pathlib import Path
 
 # Ruta donde guardaremos el token inofensivo de Kitsu
-MACUARE_CONFIG_DIR = Path.home() / ".macuare"
-SESSION_FILE = MACUARE_CONFIG_DIR / "session.json"
+OPENSTUDIO_CONFIG_DIR = Path.home() / ".openstudio"
+SESSION_FILE = OPENSTUDIO_CONFIG_DIR / "session.json"
 
 class AuthManager:
     def __init__(self):
@@ -13,8 +12,8 @@ class AuthManager:
         self.user_data = None
         
         # Asegurarnos de que exista la carpeta oculta
-        if not MACUARE_CONFIG_DIR.exists():
-            MACUARE_CONFIG_DIR.mkdir(parents=True)
+        if not OPENSTUDIO_CONFIG_DIR.exists():
+            OPENSTUDIO_CONFIG_DIR.mkdir(parents=True)
 
     def set_host(self, host_url: str):
         """Configura a dónde va a apuntar Kitsu (Gazu)"""
@@ -71,19 +70,45 @@ class AuthManager:
         if SESSION_FILE.exists():
             SESSION_FILE.unlink()
 
-    def get_user_role(self):
+    def get_user_role(self) -> str:
         """
-        El método clave: Determina si es un TD (Admin) o Artista.
-        En Kitsu, los administradores tienen el rol 'admin' o 'manager'.
+        Determina el rol del usuario según la Matriz RBAC de OpenStudio.
+        Evalúa el 'rol' nativo del servidor y el campo 'position' para Leads.
         """
         if not self.user_data:
             return "guest"
             
-        role = self.user_data.get("role", "")
-        if role in ["admin", "manager"]:
-            return "td"  # Technical Director / Producción
+        kitsu_role = self.user_data.get("role", "").lower()
+        kitsu_position = self.user_data.get("position", "").lower()
+        
+        if kitsu_role == "admin":
+            return "td"
+        elif kitsu_role == "supervisor":
+            return "supervisor"
+        elif kitsu_role == "manager":
+            return "manager" # Project Managers
+        elif kitsu_role == "vendor":
+            return "vendor"
+        elif kitsu_role == "client":
+            return "client"
+        elif kitsu_role == "user":
+            # Si es usuario base, verificamos su posición en el estudio
+            if kitsu_position == "lead":
+                return "lead"
+            return "artist"
         else:
             return "artist"
+
+    def get_current_token(self) -> str:
+        """
+        Retorna el token JWT activo de Kitsu (Gazu) para que el Hub 
+        pueda inyectarlo como la variable de entorno GAZU_AUTH_TOKEN 
+        en el subproceso aislado de Blender.
+        """
+        tokens = gazu.client.get_tokens()
+        if tokens:
+            return tokens.get("access_token", "")
+        return ""
 
     def _save_session(self, tokens):
         """Guarda los tokens de Gazu en un JSON local oculto"""

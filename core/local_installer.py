@@ -1,10 +1,10 @@
 import json
-from re import template
 import shutil
 import subprocess
 import zipfile
 import tarfile
 import platform
+import os
 from pathlib import Path
 
 class LocalInstaller:
@@ -123,11 +123,11 @@ class LocalInstaller:
             svn_root = project_root / "02_archivos_de_produccion"
             svn_root.mkdir(exist_ok=True)
 
-            # 2. Sincronizacion de Add-ons congelados (La nueva funcionalidad)
-            status_callback("Sincronizando add-ons del proyecto...", "yellow")
+            # 2. Sincronizacion de Extensiones congeladas (Blender 5.0+)
+            status_callback("Sincronizando extensiones del proyecto...", "yellow")
             self._sincronizar_addons(project_root, dependencies, status_callback)
 
-            # 3. Conectar tuberias (Symlinks para Blender Studio Tools)
+            # 3. Conectar tuberias (Symlinks para cachés pesados)
             status_callback("Configurando symlinks de produccion...", "yellow")
             self._crear_symlinks(project_path=project_root, svn_path=svn_root)
 
@@ -168,6 +168,7 @@ class LocalInstaller:
             return False, f"Error critico durante la instalacion: {str(e)}"
 
     def _sincronizar_addons(self, project_root: Path, dependencies: dict, status_callback):
+        # La ruta destino estricta para el sandboxing de Extensiones (Blender 4.2 / 5.0+)
         extensions_dir = project_root / "06_conf_LOCAL" / "blender_data" / "extensions" / "user_default"
         extensions_dir.mkdir(parents=True, exist_ok=True)
 
@@ -178,19 +179,21 @@ class LocalInstaller:
             destino_addon = extensions_dir / addon_name
 
             if origen_addon_zip.exists():
-                status_callback(f"Desplegando extensión: {addon_name} (v{version})...", "yellow")
-                
-                # Limpiar si ya existia una version anterior localmente
-                if destino_addon.exists():
-                    shutil.rmtree(destino_addon)
-                
-                destino_addon.mkdir(parents=True, exist_ok=True)
-                
-                # Extraemos el ZIP directamente en la ruta de extensiones
-                with zipfile.ZipFile(origen_addon_zip, 'r') as zip_ref:
-                    zip_ref.extractall(destino_addon)
+                # Validacion desatendida: Solo instala si el destino no existe. 
+                if not destino_addon.exists():
+                    status_callback(f"Desplegando extension: {addon_name} (v{version})...", "yellow")
+                    destino_addon.mkdir(parents=True, exist_ok=True)
+                    
+                    try:
+                        # Extraemos el paquete (que internamente debe contener su 'blender_manifest.toml')
+                        with zipfile.ZipFile(origen_addon_zip, 'r') as zip_ref:
+                            zip_ref.extractall(destino_addon)
+                    except zipfile.BadZipFile:
+                        status_callback(f"Error: El archivo {nombre_archivo} esta corrupto.", "red")
+                else:
+                    pass
             else:
-                print(f"Advertencia: No se encontro el archivo {nombre_archivo} en la boveda.")
+                status_callback(f"Advertencia: No se encontro la extension {nombre_archivo} en la boveda.", "red")
 
     def _crear_symlinks(self, project_path: Path, svn_path: Path):
         """Construye los enlaces simbolicos cruzados entre Nextcloud y SVN."""

@@ -38,10 +38,11 @@ class ViewArtist(ctk.CTkFrame):
         self.lbl_status.pack(side="left", padx=15, pady=5)
 
         # === INYECCIÓN DEL COMPONENTE DE LISTA ===
-        # Pasamos el vault_manager recibido al inicializar el widget de lista
+        # Pasamos el auth_manager y vault_manager recibidos al inicializar el widget de lista
         self.lista_proyectos = ProjectListWidget(
             parent=self,
             nextcloud_dir=self.nextcloud_dir,
+            auth_manager=self.auth,
             vault_manager=vault_manager,
             status_callback=self.actualizar_status,
             width=550,

@@ -19,7 +19,7 @@ class ViewLogin(ctk.CTkFrame):
         frame = ctk.CTkFrame(self)
         frame.pack(pady=40, padx=40, fill="both", expand=True)
 
-        lbl_titulo = ctk.CTkLabel(frame, text="Macuare Hub", font=ctk.CTkFont(size=24, weight="bold"))
+        lbl_titulo = ctk.CTkLabel(frame, text="OpenStudio Hub", font=ctk.CTkFont(size=24, weight="bold"))
         lbl_titulo.pack(pady=(30, 20))
 
         lbl_sub = ctk.CTkLabel(frame, text="Inicia sesion con tu cuenta de Kitsu", text_color="gray")
@@ -64,9 +64,13 @@ class ViewLogin(ctk.CTkFrame):
             # Almacenamos de forma segura el email y password validados en la boveda volatil
             self.vault.save_kitsu_credentials(email, password)
             
-            # Notificar de vuelta al controlador principal (macuare_hub.py)
-            self.on_success()
+            # Encolar el exito de vuelta al Hilo Principal (GUI Thread) para evitar TclError
+            self.after(0, self.on_success)
         else:
-            self.btn_login.configure(state="normal", text="Iniciar Sesion")
-            self.lbl_error.configure(text=mensaje)
+            # Encolar la restauracion de la UI en caso de error
+            self.after(0, self._restore_ui_on_error, mensaje)
 
+    def _restore_ui_on_error(self, mensaje):
+        """Metodo auxiliar para restaurar la interfaz desde el hilo principal."""
+        self.btn_login.configure(state="normal", text="Iniciar Sesion")
+        self.lbl_error.configure(text=mensaje)
