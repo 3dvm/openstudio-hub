@@ -1,3 +1,20 @@
+# =========================================================================================
+# OPENSTUDIOHUB
+# Módulo: core/templates/bootstrap.py
+# Rol Arquitectónico: DCC Scripting / Pre-Flight Config & Jailing
+# =========================================================================================
+# Copyright (c) 2026 Ernesto Del Valle Macuare. Todos los derechos reservados.
+# Licencia: GNU General Public License v3.0 (GPLv3)
+#
+# Autor: Ernesto Del Valle Macuare
+# Versión del archivo: 0.4.0
+# =========================================================================================
+
+"""
+Script de inyección ejecutado asíncronamente al iniciar Blender.
+Aplica la Matriz RBAC, activa extensiones contextualmente y establece credenciales RAM.
+"""
+
 import bpy
 import os
 import addon_utils
@@ -97,13 +114,20 @@ def _aplicar_guardrails_rbac():
     """Secuestra botones destructivos usando Runtime Polling Override."""
     print("[OPENSTUDIO HUB] Aplicando seguridad estricta RBAC (Jailing UI)...")
     
+    @classmethod
+    def poll_restringido(cls, context):
+        # Deshabilita el botón visualmente (Aparece en gris y no se puede hacer clic)
+        return False 
+        
+    # 1. Bloqueo de Asset Pipeline (Evita sobrescribir el trabajo de otros en SVN)
     if hasattr(bpy.types, "ASSETPIPE_OT_force_push"):
-        @classmethod
-        def poll_restringido(cls, context):
-            return False # Deshabilita el botón visualmente
-            
         bpy.types.ASSETPIPE_OT_force_push.poll = poll_restringido
         print("[OPENSTUDIO HUB] OVERRIDE: ASSETPIPE_OT_force_push bloqueado.")
+        
+    # 2. Bloqueo del Gatekeeper / OpenStudio Toolkit (Evita saltarse el Scene Sanity)
+    if hasattr(bpy.types, "OPENSTUDIO_OT_override_sanity"):
+        bpy.types.OPENSTUDIO_OT_override_sanity.poll = poll_restringido
+        print("[OPENSTUDIO HUB] OVERRIDE: OPENSTUDIO_OT_override_sanity bloqueado.")
 
 # Timer para asegurar que Blender cargue la GUI antes de ejecutar operadores interactivos
 if __name__ == "__main__":

@@ -1,3 +1,21 @@
+# =========================================================================================
+# OPENSTUDIOHUB
+# Módulo: core/local_installer.py
+# Rol Arquitectónico: Deployment Engine / Jailing Router
+# =========================================================================================
+# Copyright (c) 2026 Ernesto Del Valle Macuare. Todos los derechos reservados.
+# Licencia: GNU General Public License v3.0 (GPLv3)
+#
+# Autor: Ernesto Del Valle Macuare
+# Versión del archivo: 0.4.0
+# =========================================================================================
+
+"""
+Motor de despliegue y orquestación local.
+Extrae herramientas, resuelve Symlinks y bifurca la sincronización VCS (Full vs Sparse)
+basado en los roles RBAC para garantizar el Jailing de Vendors.
+"""
+
 import json
 import shutil
 import zipfile
@@ -5,7 +23,9 @@ import tarfile
 import platform
 import os
 from pathlib import Path
+from typing import Tuple, Dict, Optional
 from .vcs_router import VCSRouter
+from core.sparse_manager import SparseManager
 
 class LocalInstaller:
     def __init__(self, nextcloud_dir: Path, config_factory):
@@ -17,14 +37,14 @@ class LocalInstaller:
 
     def verificar_instalacion(self, project_root: Path) -> bool:
         """
-            Verifica si el proyecto ya fue instalado localmente en esta PC.
-            Revisa la existencia del JSON local y la carpeta de produccion.
+        Verifica si el proyecto ya fue instalado localmente en esta PC.
+        Revisa la existencia del JSON local y la carpeta de produccion.
         """
         config_local = project_root / "06_conf_LOCAL" / "project_config.json"
         vcs_dir = project_root / "02_archivos_de_produccion"
         return config_local.exists() and vcs_dir.exists()
 
-    def _get_os_info(self):
+    def _get_os_info(self) -> Tuple[str, str]:
         """Detecta el sistema operativo para buscar la extensión correcta."""
         system = platform.system().lower()
         if system == "linux":
@@ -64,9 +84,10 @@ class LocalInstaller:
 
         status_callback(f"Blender {version} extraído con éxito.", "green")
 
-    def _gestionar_vcs(self, project_root: Path, vcs_user: str, vcs_pwd: str, status_callback) -> bool:
+    def _gestionar_vcs(self, project_root: Path, vcs_user: str, vcs_pwd: str, status_callback, 
+                       user_role: str, task_metadata: Optional[Dict[str, str]]) -> bool:
         """
-        Orquesta la comunicación con el Abstract Factory (VCSRouter) aislando los comandos CLI.
+        Bifurcador RBAC: Evalúa el rol y orquesta la clonación (Full Pull vs Sparse Jailing).
         """
         vcs_root = project_root / "02_archivos_de_produccion"
         
@@ -77,30 +98,42 @@ class LocalInstaller:
         final_repo_url = f"{base_repo_url}/{project_name_safe}/02_archivos_de_produccion"
 
         router = VCSRouter(vcs_type=vcs_type, repo_url=final_repo_url, workspace_dir=vcs_root)
-        adapter = router.get_adapter()
         
-        status_callback(f"Sincronizando Workspace con {vcs_type.upper()}...", "yellow")
+        # Leemos política B2B de forma segura (Fallback a True si el método no existe aún)
+        is_sparse_enabled = getattr(self.config_factory, 'is_vendor_sparse_checkout_enabled', lambda: True)()
+        
+        # === BIFURCACIÓN DE JAILING ===
+        if user_role == "vendor" and is_sparse_enabled:
+            sparse_manager = SparseManager(vcs_router=router, status_callback=status_callback)
+            # Enrutamos al SparseManager y retornamos su código de éxito
+            return sparse_manager.setup_vendor_workspace(task_metadata, vcs_user, vcs_pwd)
+        
+        # === FULL CHECKOUT (Staff: Artists, Leads, TDs) ===
+        adapter = router.get_adapter()
+        status_callback(f"Sincronizando Workspace Completo con {vcs_type.upper()}...", "yellow")
         
         try:
             adapter.full_pull(username=vcs_user, password=vcs_pwd)
             status_callback(f"{vcs_type.upper()}: Sincronización completada con éxito.", "green")
             return True
         except RuntimeError as e:
-            status_callback(f"Fallo de conexión al repositorio: Revisa tus credenciales o conexión.", "red")
+            status_callback("Fallo de conexión al repositorio: Revisa tus credenciales o conexión.", "red")
             print(f"[MACUARE HUB] Error en Controlador VCS: {e}")
             return False
 
-    def instalar_entorno(self, project_root: Path, vcs_user: str, vcs_pwd: str, status_callback) -> tuple[bool, str]:
+    def instalar_entorno(self, project_root: Path, vcs_user: str, vcs_pwd: str, status_callback,
+                         user_role: str = "artist", task_metadata: Optional[Dict[str, str]] = None) -> Tuple[bool, str]:
         """
-            Ejecuta el despliegue del entorno local del artista.
+        Ejecuta el despliegue del entorno local del artista.
+        Ahora integra la inyección de roles para seguridad.
         """
         init_json_path = project_root / "05_config_estudio" / "project_init.json"
         
         if not init_json_path.exists():
-            return False, "Error: No se encontro la semilla global project_init.json"
+            return False, "Error: No se encontró la semilla global project_init.json"
 
         try:
-            status_callback("Leyendo configuracion global...", "yellow")
+            status_callback("Leyendo configuración global...", "yellow")
             with open(init_json_path, 'r', encoding='utf-8') as f:
                 init_data = json.load(f)
 
@@ -108,14 +141,15 @@ class LocalInstaller:
             blender_version = init_data.get("blender_version", "5.1.2")
             dependencies = init_data.get("dependencies", {})
 
-            # === FAIL FAST: Verificamos credenciales y conexión de red ANTES de extraer Blender ===
-            checkout_ok = self._gestionar_vcs(project_root, vcs_user, vcs_pwd, status_callback)
+            # === FAIL FAST & JAILING: Verificamos red y clonamos según rol ===
+            checkout_ok = self._gestionar_vcs(
+                project_root, vcs_user, vcs_pwd, status_callback, user_role, task_metadata
+            )
             
             if not checkout_ok:
-                # Abortamos de inmediato. El JSON local no se creará, previniendo el falso positivo.
-                return False, "Conexión al repositorio rechazada. Instalación abortada."
+                return False, "Conexión al repositorio o clonación rechazada. Instalación abortada."
 
-            # Si el VCS fue exitoso, continuamos con las tareas pesadas de disco
+            # Si el VCS fue exitoso, continuamos con tareas de disco locales
             self._instalar_blender(project_root, blender_version, status_callback)
 
             template_name = init_data.get("template", "Macuare_Estudio")
@@ -129,8 +163,8 @@ class LocalInstaller:
             status_callback("Configurando symlinks de produccion...", "yellow")
             self._crear_symlinks(project_path=project_root, svn_path=vcs_root)
 
-            # Generar el ADN Local mutado (project_config.json)
-            status_callback("Generando archivo de configuracion local...", "yellow")
+            # Generar el ADN Local mutado
+            status_callback("Generando archivo de configuración local...", "yellow")
             
             config_local_dir = project_root / "06_conf_LOCAL"
             config_local_dir.mkdir(exist_ok=True)
@@ -154,10 +188,10 @@ class LocalInstaller:
             with open(config_local_file, 'w', encoding='utf-8') as f:
                 json.dump(local_config_data, f, indent=4)
             
-            return True, "Entorno local instalado y verificado con exito."
+            return True, "Entorno local instalado y verificado con éxito."
 
         except Exception as e:
-            return False, f"Error critico durante la instalacion: {str(e)}"
+            return False, f"Error crítico durante la instalación: {str(e)}"
 
     def _sincronizar_addons(self, project_root: Path, dependencies: dict, status_callback):
         extensions_dir = project_root / "06_conf_LOCAL" / "blender_data" / "extensions" / "user_default"
@@ -176,9 +210,9 @@ class LocalInstaller:
                         with zipfile.ZipFile(origen_addon_zip, 'r') as zip_ref:
                             zip_ref.extractall(destino_addon)
                     except zipfile.BadZipFile:
-                        status_callback(f"Error: El archivo {nombre_archivo} esta corrupto.", "red")
+                        status_callback(f"Error: El archivo {nombre_archivo} está corrupto.", "red")
             else:
-                status_callback(f"Advertencia: No se encontro la extension {nombre_archivo} en la boveda.", "red")
+                status_callback(f"Advertencia: No se encontró la extension {nombre_archivo} en la bóveda.", "red")
 
     def _crear_symlinks(self, project_path: Path, svn_path: Path):
         render_root = project_path / "03_render"

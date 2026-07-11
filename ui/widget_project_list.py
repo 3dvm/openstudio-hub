@@ -7,7 +7,7 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.3.1
+# Versión del archivo: 0.4.0
 # =========================================================================================
 
 """
@@ -168,18 +168,43 @@ class ProjectListWidget(ctk.CTkScrollableFrame):
                 on_success_callback=lambda: self.ejecutar_instalacion_hilo(project_root)
             )
             return
+            
+        # Extraemos el rol dinámicamente antes de lanzar la descarga
+        user_role = self.auth_manager.get_user_role()
+        task_metadata = None
+        
+        # === JIT INTERCEPTOR PARA VENDORS (Traducción de Tarea) ===
+        if user_role == "vendor":
+            dialog = ctk.CTkInputDialog(text="[Vendor Jailing] Ingrese el ID de su Tarea en Kitsu:", title="Validación Sparse")
+            task_id = dialog.get_input()
+            
+            if not task_id:
+                self.status_callback("Instalación cancelada por el usuario.", "red")
+                return
+                
+            self.status_callback("Consultando jerarquía de tarea en Kitsu...", "yellow")
+            self.update_idletasks()
+            
+            task_metadata = self.auth_manager.get_task_metadata(task_id)
+            if not task_metadata:
+                self.status_callback("Error: Tarea no encontrada o metadatos incompletos.", "red")
+                return
 
+        # Despachamos el hilo pasando el contexto completo
         threading.Thread(
             target=self._hilo_instalacion, 
-            args=(project_root,), 
+            args=(project_root, user_role, task_metadata), 
             daemon=True
         ).start()
 
-    def _hilo_instalacion(self, project_root: Path):
+    def _hilo_instalacion(self, project_root: Path, user_role: str, task_metadata: dict):
         # Extraemos las claves de la RAM para que el motor haga el checkout silencioso
         svn_user, svn_pwd = self.vault.get_svn_credentials()
         
-        exito, mensaje = self.installer.instalar_entorno(project_root, svn_user, svn_pwd, self.status_callback)
+        exito, mensaje = self.installer.instalar_entorno(
+            project_root, svn_user, svn_pwd, self.status_callback,
+            user_role=user_role, task_metadata=task_metadata
+        )
         
         if exito:
             self.status_callback(mensaje, "green")

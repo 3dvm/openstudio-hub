@@ -1,6 +1,25 @@
+# =========================================================================================
+# OPENSTUDIOHUB
+# Módulo: core/auth_manager.py
+# Rol Arquitectónico: Backend SDK / Autenticación y Contexto (Gazu)
+# =========================================================================================
+# Copyright (c) 2026 Ernesto Del Valle Macuare. Todos los derechos reservados.
+# Licencia: GNU General Public License v3.0 (GPLv3)
+#
+# Autor: Ernesto Del Valle Macuare
+# Versión del archivo: 0.4.0
+# =========================================================================================
+
+"""
+Gestor de Autenticación y Contexto de Kitsu.
+Maneja las sesiones, tokens JWT, resolución de la matriz RBAC 
+y extracción de metadatos jerárquicos de las tareas (Shots/Assets).
+"""
+
 import json
 import gazu
 from pathlib import Path
+from typing import Dict, Tuple, Optional
 
 # Ruta donde guardaremos el token inofensivo de Kitsu
 OPENSTUDIO_CONFIG_DIR = Path.home() / ".openstudio"
@@ -15,7 +34,7 @@ class AuthManager:
         if not OPENSTUDIO_CONFIG_DIR.exists():
             OPENSTUDIO_CONFIG_DIR.mkdir(parents=True)
 
-    def set_host(self, host_url: str):
+    def set_host(self, host_url: str) -> None:
         """Configura a dónde va a apuntar Kitsu (Gazu)"""
         # Gazu requiere que la URL termine en /api
         if not host_url.endswith("/api"):
@@ -24,7 +43,7 @@ class AuthManager:
         self.kitsu_host = host_url
         gazu.client.set_host(self.kitsu_host)
 
-    def login_with_credentials(self, email, password, host_url):
+    def login_with_credentials(self, email: str, password: str, host_url: str) -> Tuple[bool, str]:
         """Inicia sesión con email y contraseña, y guarda el token localmente"""
         try:
             self.set_host(host_url)
@@ -41,7 +60,7 @@ class AuthManager:
         except Exception as e:
             return False, f"Error de conexión: {str(e)}"
 
-    def login_with_saved_session(self):
+    def login_with_saved_session(self) -> bool:
         """Intenta restaurar la sesión usando el JSON local"""
         if not SESSION_FILE.exists():
             return False
@@ -63,7 +82,7 @@ class AuthManager:
                 SESSION_FILE.unlink() # Borrar archivo inválido
             return False
 
-    def logout(self):
+    def logout(self) -> None:
         """Cierra sesión y borra el rastro en el disco"""
         gazu.log_out()
         self.user_data = None
@@ -110,7 +129,41 @@ class AuthManager:
             return tokens.get("access_token", "")
         return ""
 
-    def _save_session(self, tokens):
+    def get_task_metadata(self, task_id: str) -> Optional[Dict[str, str]]:
+        """
+        Extrae la jerarquía completa de una tarea en Kitsu y la formatea
+        para ser consumida por el PathResolver.
+        """
+        try:
+            task = gazu.task.get_task(task_id)
+            if not task:
+                return None
+                
+            entity = gazu.entity.get_entity(task["entity_id"])
+            if not entity:
+                return None
+
+            entity_type = entity.get("entity_type_name", "")
+            entity_name = entity.get("name", "")
+            
+            metadata = {
+                "entity_type": entity_type,
+                "entity_name": entity_name
+            }
+            
+            if entity_type.lower() == "shot":
+                sequence = gazu.shot.get_sequence(entity.get("parent_id"))
+                metadata["sequence_name"] = sequence.get("name", "") if sequence else ""
+            elif entity_type.lower() == "asset":
+                asset_type = gazu.asset.get_asset_type(entity.get("entity_type_id"))
+                metadata["asset_type_name"] = asset_type.get("name", "") if asset_type else ""
+                
+            return metadata
+        except Exception as e:
+            print(f"[AuthManager] Error extrayendo metadatos de Tarea: {e}")
+            return None
+
+    def _save_session(self, tokens) -> None:
         """Guarda los tokens de Gazu en un JSON local oculto"""
         data = {
             "host": self.kitsu_host,
