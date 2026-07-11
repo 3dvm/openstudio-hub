@@ -1,0 +1,47 @@
+{
+  "_meta": {
+    "schema_version": "1.0.0",
+    "description": "OpenStudio Hub Global B2B Configuration File"
+  },
+  "studio_profile": {
+    "name": "OpenStudio Studio",
+    "timezone": "America/Caracas",
+    "strict_sanity_checks": true
+  },
+  "kitsu_production": {
+    "api_url": "https://kitsu.tu-estudio.com/api",
+    "event_stream_url": "wss://kitsu.tu-estudio.com/socket.io",
+    "timeout_seconds": 30
+  },
+  "vcs_engine": {
+    "active_adapter": "svn",
+    "repository_url": "https://svn.tu-estudio.com/repo/02_produccion",
+    "local_workspace_root": {
+      "windows": "D:\\OpenStudio\\Workspace",
+      "linux": "/home/macuare/Nextcloud/Macuare-Estudio-Archivos/01_PROYECTOS_ESTUDIO/",
+      "darwin": "/Volumes/Storage/OPENSTUDIO_workspace"
+    },
+    "enable_vendor_sparse_checkout": true
+  },
+  "dcc_environment": {
+    "blender_executable": {
+      "windows": "C:\\Program Files\\Blender Foundation\\Blender 5.0\\blender.exe",
+      "linux": null,
+      "darwin": null
+    },
+    "supervisor_app_template": "blender-media-viewer",
+    "auto_save_interval_minutes": 30
+  },
+  "ai_telemetry": {
+    "enabled": true,
+    "provider": "openrouter",
+    "model_id": "google/gemini-2.5-flash",
+    "auto_log_endpoint": "https://openrouter.ai/api/v1/chat/completions"
+  },
+  "macuare_services": {
+    "api_key": "macuare_live_xyz123456789",
+    "proxy_url": "https://api.estudiomacuare.com",
+    "enable_ai_scribe": true,
+    "enable_daily_digest": true
+  }
+}

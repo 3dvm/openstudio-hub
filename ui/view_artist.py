@@ -1,59 +1,72 @@
 import customtkinter as ctk
+from pathlib import Path
+from typing import Callable
+from core.auth_manager import AuthManager
+from core.vault_manager import VaultManager
+from core.config_factory import ConfigFactory
 from ui.widget_project_list import ProjectListWidget
 
 class ViewArtist(ctk.CTkFrame):
-    def __init__(self, parent, auth_manager, nextcloud_dir, vault_manager, on_logout):
-        """
-        Panel de control para los Artistas.
-        Muestra la lista de proyectos asignados y control de estados.
-        """
-        super().__init__(parent, fg_color="transparent")
-        self.auth = auth_manager
+    def __init__(self, parent: ctk.CTk, auth_manager: AuthManager, nextcloud_dir: Path, 
+                 vault_manager: VaultManager, config_factory: ConfigFactory, on_logout: Callable[[], None]):
+        """Panel de control modular para la interfaz de los Artistas."""
+        super().__init__(parent)
+        
+        # === ASIGNACIÓN DE DEPENDENCIAS ===
+        self.auth_manager = auth_manager
         self.nextcloud_dir = nextcloud_dir
+        self.vault_manager = vault_manager
+        self.config_factory = config_factory
         self.on_logout = on_logout
 
-        # --- BARRA SUPERIOR (Usuario y Logout) ---
-        top_bar = ctk.CTkFrame(self, height=50)
-        top_bar.pack(fill="x", padx=20, pady=(20, 10))
+        self._build_ui()
 
-        # Barra superior de navegacion
-        rol = self.auth.get_user_role()
-        nombre_user = self.auth.user_data.get("first_name", rol)
+    def _build_ui(self) -> None:
+        # Configuración de distribución de la cuadrícula
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        # Bar superior de navegación / acciones
+        self.top_bar = ctk.CTkFrame(self, height=50)
+        self.top_bar.grid(row=0, column=0, sticky="ew", padx=10, pady=5)
+        self.top_bar.grid_propagate(False)
         
-        lbl_welcome = ctk.CTkLabel(top_bar, text=f"¡Hola, {nombre_user}! [Panel Artista]", font=ctk.CTkFont(size=14, weight="bold"))
-        lbl_welcome.pack(side="left", padx=15, pady=10)
+        self.lbl_title = ctk.CTkLabel(self.top_bar, text="Proyectos Asignados (Artist Workspace)", font=ctk.CTkFont(weight="bold"))
+        self.lbl_title.pack(side="left", padx=15, pady=10)
 
-        btn_logout = ctk.CTkButton(top_bar, text="Cerrar Sesión", width=100, fg_color="#EF4444", hover_color="#DC2626", command=self.on_logout)
-        btn_logout.pack(side="right", padx=15, pady=10)
+        self.btn_logout = ctk.CTkButton(self.top_bar, text="Cerrar Sesión", fg_color="#991B1B", hover_color="#7F1D1D", command=self.on_logout)
+        self.btn_logout.pack(side="right", padx=15, pady=10)
 
-        # --- CONTENIDO PRINCIPAL ---
-        lbl_seccion = ctk.CTkLabel(self, text="Tus Proyectos Activos:", font=ctk.CTkFont(size=16, weight="bold"))
-        lbl_seccion.pack(pady=(10, 5), padx=25, anchor="w")
+        # === SOLUCIÓN: BARRA DE ESTADO CONSTRUIDA ANTES ===
+        # Definimos el widget contenedor y el label en RAM para que el callback asíncrono
+        # del ProjectListWidget pueda encontrar el atributo inicializado.
+        self.status_bar = ctk.CTkFrame(self, height=30, fg_color="#1E293B")
+        self.status_bar.grid(row=2, column=0, sticky="ew", padx=10, pady=(5, 10))
+        self.status_bar.grid_propagate(False)
 
-        # --- BARRA DE ESTADO INFERIOR ---
-        self.status_bar = ctk.CTkFrame(self, height=30)
-        self.status_bar.pack(fill="x", side="bottom", padx=20, pady=(0, 20))
+        self.lbl_status = ctk.CTkLabel(self.status_bar, text="Sistema listo.", text_color="white", font=ctk.CTkFont(size=11))
+        self.lbl_status.pack(side="left", padx=15, pady=2)
 
-        self.lbl_status = ctk.CTkLabel(self.status_bar, text="Listo.", text_color="gray", font=ctk.CTkFont(size=11))
-        self.lbl_status.pack(side="left", padx=15, pady=5)
-
-        # === INYECCIÓN DEL COMPONENTE DE LISTA ===
-        # Pasamos el auth_manager y vault_manager recibidos al inicializar el widget de lista
+        # === INYECCIÓN DEL WIDGET DE PROYECTOS ===
+        # Al ejecutarse cargar_proyectos() en su __init__, lbl_status ya existirá.
         self.lista_proyectos = ProjectListWidget(
             parent=self,
             nextcloud_dir=self.nextcloud_dir,
-            auth_manager=self.auth,
-            vault_manager=vault_manager,
-            status_callback=self.actualizar_status,
-            width=550,
-            height=400
+            auth_manager=self.auth_manager,
+            vault_manager=self.vault_manager,
+            config_factory=self.config_factory,
+            status_callback=self.actualizar_status
         )
-        self.lista_proyectos.pack(fill="both", expand=True, padx=20, pady=10)
+        self.lista_proyectos.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
 
-    def actualizar_status(self, mensaje: str, color: str = "white"):
+    def actualizar_status(self, mensaje: str, color: str = 'white') -> None:
         """Callback seguro para que los componentes hijos reporten su progreso."""
-        # Mapeo simple de colores amigables para el tema oscuro de CustomTkinter
-        colores = {"green": "#10B981", "yellow": "#F59E0B", "red": "#EF4444", "gray": "#9CA3AF", "white": "#FFFFFF"}
-        texto_color = colores.get(color, color)
-        
-        self.lbl_status.configure(text=mensaje, text_color=texto_color)
+        color_map = {
+            "white": "#F8FAFC",
+            "yellow": "#F59E0B",
+            "green": "#10B981",
+            "red": "#EF4444",
+            "gray": "#94A3B8"
+        }
+        text_color = color_map.get(color.lower(), color)
+        self.lbl_status.configure(text=mensaje, text_color=text_color)

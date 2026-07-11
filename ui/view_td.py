@@ -1,9 +1,15 @@
 import customtkinter as ctk
+from pathlib import Path
+from typing import Callable
+from core.auth_manager import AuthManager
+from core.vault_manager import VaultManager
+from core.config_factory import ConfigFactory
 from ui.window_new_project import NewProjectWindow
 from ui.widget_project_list import ProjectListWidget
 
 class ViewTD(ctk.CTkFrame):
-    def __init__(self, parent, auth_manager, nextcloud_dir, vault_manager, on_logout):
+    def __init__(self, parent: ctk.CTk, auth_manager: AuthManager, nextcloud_dir: Path, 
+                 vault_manager: VaultManager, config_factory: ConfigFactory, on_logout: Callable[[], None]):
         """
         Panel de control avanzado para el Director Técnico (TD).
         Permite la visualización y la inicialización de nuevos pipelines en el servidor.
@@ -11,8 +17,9 @@ class ViewTD(ctk.CTkFrame):
         super().__init__(parent, fg_color="transparent")
         self.auth = auth_manager
         self.nextcloud_dir = nextcloud_dir
-        self.on_logout = on_logout
         self.vault = vault_manager # Guardamos la referencia para el modal del mago
+        self.config_factory = config_factory
+        self.on_logout = on_logout
 
         # --- BARRA SUPERIOR ---
         top_bar = ctk.CTkFrame(self, height=50)
@@ -54,11 +61,13 @@ class ViewTD(ctk.CTkFrame):
         self.lbl_status.pack(side="left", padx=15, pady=5)
 
         # === INYECCIÓN DEL COMPONENTE DE LISTA ===
+        # Pasamos el config_factory en cascada cumpliendo con el contrato del widget
         self.lista_proyectos = ProjectListWidget(
             parent=self,
             nextcloud_dir=self.nextcloud_dir,
             auth_manager=self.auth,
-            vault_manager=vault_manager,
+            vault_manager=self.vault,
+            config_factory=self.config_factory,
             status_callback=self.actualizar_status,
             width=550,
             height=340
