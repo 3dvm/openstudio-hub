@@ -1,32 +1,64 @@
 import gazu
 import getpass
 import sys
+import json
+from pathlib import Path
 
-def main():
-    print("==================================================")
-    print("🌱 Kitsu Seed Data Generator - OpenStudio Hub Test")
-    print("==================================================")
-    
-    # 1. Recolección de credenciales
-    host_url = input("URL de Kitsu (ej. http://localhost/api): ").strip()
-    # Asegurarnos de que termine en /api
+# Definimos la ruta del archivo de configuración relativo a este script
+CONFIG_FILE = Path(__file__).parent / "kitsu_test_env.json"
+
+def get_credentials():
+    """Carga las credenciales desde el JSON o las pide al usuario y las guarda."""
+    if CONFIG_FILE.exists():
+        print(f"[+] Cargando credenciales cacheadas desde {CONFIG_FILE.name}...")
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            print("[-] Error: El archivo de configuración está corrupto. Borrándolo...")
+            CONFIG_FILE.unlink()
+            
+    print("[!] Primer inicio detectado. Configura tu entorno de pruebas:")
+    host_url = input("URL de Kitsu (ej. https://proyectos.macuare.com.ve/api): ").strip()
     if not host_url.endswith("/api"):
         host_url = f"{host_url.rstrip('/')}/api"
         
     email = input("Email de Admin: ").strip()
     password = getpass.getpass("Contraseña: ")
     
-    print("\n[+] Conectando a la API...")
-    gazu.client.set_host(host_url)
+    config_data = {
+        "host_url": host_url,
+        "email": email,
+        "password": password
+    }
+    
+    # Guardamos para el futuro
+    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(config_data, f, indent=4)
+    print(f"[+] Credenciales guardadas exitosamente en {CONFIG_FILE.name}\n")
+    
+    return config_data
+
+def main():
+    print("==================================================")
+    print("🌱 Kitsu Seed Data Generator - RAW API Edition")
+    print("==================================================")
+    
+    # 1. Recolección de credenciales automatizada
+    creds = get_credentials()
+    
+    print("[+] Conectando a la API...")
+    gazu.client.set_host(creds["host_url"])
     
     try:
-        gazu.log_in(email, password)
+        gazu.log_in(creds["email"], creds["password"])
         print("[+] Login exitoso.")
-    except gazu.exception.AuthFailedException:
-        print("[-] Error: Credenciales incorrectas.")
-        sys.exit(1)
     except Exception as e:
-        print(f"[-] Error de red: {e}")
+        print(f"[-] Error de red/credenciales: {e}")
+        # Si la clave cambió, borramos el caché para que pregunte de nuevo la próxima vez
+        if CONFIG_FILE.exists():
+            CONFIG_FILE.unlink()
+            print("[!] Archivo de caché purgado. Vuelve a ejecutar el script.")
         sys.exit(1)
 
     # 2. Creación del Proyecto
@@ -75,7 +107,6 @@ def main():
     dummy_users = [
         {"first_name": "Test", "last_name": "Vendor", "email": "vendor@dummy.com", "role": "user", "title": "Vendor"},
         {"first_name": "Test", "last_name": "Artist", "email": "artist@dummy.com", "role": "user", "title": "Artist"},
-        {"first_name": "Test", "last_name": "Lead", "email": "lead@dummy.com", "role": "user", "title": "Lead"},
     ]
     
     created_users = {}
@@ -83,7 +114,6 @@ def main():
         user = gazu.person.get_person_by_email(du["email"])
         if not user:
             try:
-                # Nota: Gazu asigna roles internamente, si la API lo rechaza, los creamos como standard users.
                 user = gazu.person.new_person(
                     first_name=du["first_name"],
                     last_name=du["last_name"],
@@ -93,35 +123,60 @@ def main():
                 )
                 print(f"    -> Usuario '{du['email']}' ({du['title']}) creado.")
             except Exception as e:
-                print(f"    -> Advertencia: No se pudo crear el usuario {du['email']}. ¿Faltan permisos de Admin? Detalle: {e}")
+                print(f"    -> Advertencia: No se pudo crear el usuario {du['email']}. Detalle: {e}")
         else:
             print(f"    -> Usuario '{du['email']}' ya existe.")
-        created_users[du["title"]] = user
+        if user:
+            created_users[du["title"]] = user
 
-    # 6. Creación de Tareas y Asignaciones
-    print("\n[+] Creando Tareas y asignando usuarios...")
-    
-    # Asegurar Tipos de Tarea
-    anim_type = gazu.task.get_task_type_by_name("Animation")
-    if not anim_type: anim_type = gazu.task.new_task_type("Animation")
-    
-    rig_type = gazu.task.get_task_type_by_name("Rigging")
-    if not rig_type: rig_type = gazu.task.new_task_type("Rigging")
+    # 6. Búsqueda Segura de Tipos de Tarea (Vía RAW API)
+    print("\n[+] Buscando Tipos de Tarea compatibles vía RAW API...")
+    try:
+        raw_task_types = gazu.client.get("data/task-types")
+        
+        shot_task_type = None
+        asset_task_type = None
+        
+        for tt in raw_task_types:
+            if tt.get("for_entity") == "Shot" and not shot_task_type:
+                shot_task_type = tt
+            elif tt.get("for_entity") == "Asset" and tt.get("name") == "Rigging":
+                asset_task_type = tt
+                
+        if not asset_task_type:
+            for tt in raw_task_types:
+                if tt.get("for_entity") == "Asset":
+                    asset_task_type = tt
+                    break
 
-    # Asignar Vendor a Animation en sh010
+        if not shot_task_type or not asset_task_type:
+            print("[-] ERROR: Faltan tipos de tarea en Kitsu. Necesitas al menos una tarea configurada para 'Shots' y una para 'Assets'.")
+            sys.exit(1)
+            
+        print(f"    -> Tarea para Shot encontrada: {shot_task_type['name']}")
+        print(f"    -> Tarea para Asset encontrada: {asset_task_type['name']}")
+
+    except Exception as e:
+        print(f"[-] Error consultando la API cruda: {e}")
+        sys.exit(1)
+
+    # 7. Asignaciones
+    print("\n[+] Asignando Tareas a Usuarios...")
+    
     shot_10 = gazu.shot.get_shot_by_name(sequence, "sh010")
     if shot_10 and created_users.get("Vendor"):
-        task = gazu.task.get_task_by_entity(shot_10, anim_type)
-        if not task: task = gazu.task.new_task(shot_10, anim_type)
+        task = gazu.task.get_task_by_entity(shot_10, shot_task_type)
+        if not task: 
+            task = gazu.task.new_task(shot_10, shot_task_type)
         gazu.task.assign_task(task, created_users["Vendor"])
-        print(f"    -> Tarea 'Animation' en 'sh010' asignada al Vendor.")
+        print(f"    -> Tarea '{shot_task_type['name']}' en 'sh010' asignada al Vendor.")
 
-    # Asignar Artist a Rigging en Prota
     if asset and created_users.get("Artist"):
-        task = gazu.task.get_task_by_entity(asset, rig_type)
-        if not task: task = gazu.task.new_task(asset, rig_type)
+        task = gazu.task.get_task_by_entity(asset, asset_task_type)
+        if not task: 
+            task = gazu.task.new_task(asset, asset_task_type)
         gazu.task.assign_task(task, created_users["Artist"])
-        print(f"    -> Tarea 'Rigging' en 'Prota' asignada al Artist.")
+        print(f"    -> Tarea '{asset_task_type['name']}' en 'Prota' asignada al Artist.")
 
     print("\n==================================================")
     print("✅ Siembra de datos completada con éxito.")

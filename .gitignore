@@ -6,3 +6,5 @@ dist/
 *.spec
 tools/
 prompt_context.txt
+tests/dev_tools/kitsu_test_env.json
+tests/dev_tools/svn_ssh_env.json
