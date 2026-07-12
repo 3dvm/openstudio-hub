@@ -1,3 +1,4 @@
+
 # =========================================================================================
 # OPENSTUDIOHUB
 # Módulo: core/auth_manager.py
@@ -7,7 +8,7 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.4.0
+# Versión del archivo: 0.4.1
 # =========================================================================================
 
 """
