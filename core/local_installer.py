@@ -94,8 +94,7 @@ class LocalInstaller:
         vcs_type = self.config_factory.get_vcs_adapter_type()
         base_repo_url = self.config_factory.get_vcs_repository_url()
         
-        project_name_safe = project_root.name.replace("-", "_") 
-        final_repo_url = f"{base_repo_url}/{project_name_safe}/02_archivos_de_produccion"
+        final_repo_url = f"{base_repo_url}/{project_root.name}/02_archivos_de_produccion"
 
         router = VCSRouter(vcs_type=vcs_type, repo_url=final_repo_url, workspace_dir=vcs_root)
         
@@ -105,8 +104,12 @@ class LocalInstaller:
         # === BIFURCACIÓN DE JAILING ===
         if user_role == "vendor" and is_sparse_enabled:
             sparse_manager = SparseManager(vcs_router=router, status_callback=status_callback)
-            # Enrutamos al SparseManager y retornamos su código de éxito
-            return sparse_manager.setup_vendor_workspace(task_metadata, vcs_user, vcs_pwd)
+            
+            # Mantenemos el error visual puro generado por el SparseManager
+            success = sparse_manager.setup_vendor_workspace(task_metadata, vcs_user, vcs_pwd)
+            if not success:
+                return False  
+            return True
         
         # === FULL CHECKOUT (Staff: Artists, Leads, TDs) ===
         adapter = router.get_adapter()
@@ -147,7 +150,8 @@ class LocalInstaller:
             )
             
             if not checkout_ok:
-                return False, "Conexión al repositorio o clonación rechazada. Instalación abortada."
+                # Retornamos el mensaje vacío porque el SparseManager o FullPull ya imprimieron el error en la UI.
+                return False, ""
 
             # Si el VCS fue exitoso, continuamos con tareas de disco locales
             self._instalar_blender(project_root, blender_version, status_callback)

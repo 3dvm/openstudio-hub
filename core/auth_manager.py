@@ -144,7 +144,7 @@ class AuthManager:
             if not entity:
                 return None
 
-            entity_type = entity.get("entity_type_name", "")
+            entity_type = entity.get("type", "")
             entity_name = entity.get("name", "")
             
             metadata = {

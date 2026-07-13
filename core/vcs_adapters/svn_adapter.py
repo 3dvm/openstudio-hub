@@ -32,8 +32,26 @@ class SVNAdapter(AbstractVCS):
 
     def _run_subprocess(self, cmd: List[str], cwd: Optional[Path] = None) -> str:
         """Envoltorio seguro para ejecutar subprocesos capturando los errores."""
+        cwd_path = str(cwd) if cwd else None
+        
+        # === MODO DEBUG: Máscara de seguridad para no imprimir la clave en consola ===
+        safe_cmd = []
+        skip_next = False
+        for token in cmd:
+            if skip_next:
+                safe_cmd.append("********")
+                skip_next = False
+            elif token == "--password":
+                safe_cmd.append(token)
+                skip_next = True
+            else:
+                safe_cmd.append(token)
+                
+        print(f"\n[SVN DEBUG] Ejecutando (CWD: {cwd_path or 'Actual'}):")
+        print(f" -> {' '.join(safe_cmd)}")
+        # ==============================================================================
+
         try:
-            cwd_path = str(cwd) if cwd else None
             result = subprocess.run(
                 cmd, 
                 cwd=cwd_path, 
@@ -43,8 +61,9 @@ class SVNAdapter(AbstractVCS):
             )
             return result.stdout
         except subprocess.CalledProcessError as e:
-            # Captura el stderr real de SVN (Ej. Password incorrecto) para pasarlo a la UI
+            # Captura el stderr real de SVN (Ej. Password incorrecto) para pasarlo a la UI y a Consola
             error_msg = e.stderr.strip() if e.stderr else str(e)
+            print(f"[SVN ERROR FATAL] Código {e.returncode}: {error_msg}\n")
             raise RuntimeError(f"Fallo de SVN: {error_msg}")
 
     def full_pull(self, username: Optional[str] = None, password: Optional[str] = None) -> bool:
@@ -70,7 +89,8 @@ class SVNAdapter(AbstractVCS):
         
         # 2. Descarga solo de los directorios aprobados en la lista de rutas
         for path in paths:
-            cmd_up = ["svn", "update", "--set-depth", "infinity", path]
+            # FIX: Añadida la bandera --parents para construir la jerarquía vacía obligatoria
+            cmd_up = ["svn", "update", "--set-depth", "infinity", "--parents", path]
             cmd_up.extend(self._build_auth_args(username, password))
             self._run_subprocess(cmd_up, cwd=self.workspace_dir)
             
