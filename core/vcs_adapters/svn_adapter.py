@@ -7,7 +7,7 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.4.0
+# Versión del archivo: 0.4.2
 # =========================================================================================
 
 """
@@ -132,3 +132,24 @@ class SVNAdapter(AbstractVCS):
                 file_path = line[8:].strip()
                 status_dict[file_path] = state
         return status_dict
+
+    def set_needs_lock(self, path: str) -> bool:
+        """
+        Aplica la propiedad svn:needs-lock al archivo especificado.
+        Obliga al sistema de control de versiones a mantener el archivo
+        en modo 'Solo Lectura' hasta que un usuario autorizado lo bloquee.
+        """
+        cmd = ["svn", "propset", "svn:needs-lock", "*", path]
+        self._run_subprocess(cmd, cwd=self.workspace_dir)
+        return True
+
+    def cleanup(self) -> bool:
+        """
+        Sanea la base de datos interna local del VCS para resolver bloqueos locales (local locks)
+        provocados por cortes abruptos de energía, caídas de red o cierres forzados.
+        """
+        if self.workspace_dir.exists():
+            cmd = ["svn", "cleanup"]
+            self._run_subprocess(cmd, cwd=self.workspace_dir)
+            return True
+        return False

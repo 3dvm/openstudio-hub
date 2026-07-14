@@ -7,13 +7,15 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.4.0
+# Versión del archivo: 0.4.4
 # =========================================================================================
 
 """
 Componente reutilizable que escanea y despliega la lista de proyectos.
 Verifica el estado de instalación y las credenciales en RAM antes de proceder,
 actuando como el interceptor Just-In-Time (JIT) principal de la interfaz.
+Integra la política de "Paso del Testigo" (Lock Passing) para archivos críticos
+y el motor asíncrono de auto-recuperación ante caídas físicas (Crash Recovery).
 """
 
 import json
@@ -22,6 +24,7 @@ import customtkinter as ctk
 from pathlib import Path
 from core.env_launcher import lanzar_blender
 from core.local_installer import LocalInstaller
+from core.vcs_router import VCSRouter
 from ui.window_svn_login import SVNLoginWindow
 
 class ProjectListWidget(ctk.CTkScrollableFrame):
@@ -140,21 +143,110 @@ class ProjectListWidget(ctk.CTkScrollableFrame):
         user_role = self.auth_manager.get_user_role()
 
         # Input interactivo temporal para capturar el TaskType
-        dialog = ctk.CTkInputDialog(text="Ingrese el Tipo de Tarea\n(ej. animation, rigging, lookdev):", title="Context-Aware Tooling")
+        dialog = ctk.CTkInputDialog(text="Ingrese el Tipo de Tarea\n(ej. animation, edit, rigging):", title="Context-Aware Tooling")
         task_type = dialog.get_input()
         
         if not task_type:
             self.status_callback("Lanzamiento cancelado por el usuario.", "red")
             return
 
-        self.status_callback("Iniciando entorno aislado...", "yellow")
-
-        # Lanzamos el hilo inyectando TODAS las credenciales (en crudo) para que el bootstrap las procese
+        # Despachamos el ciclo de vida del DCC a un hilo secundario dedicado
         threading.Thread(
-            target=lanzar_blender, 
-            args=(project_root, config_path, svn_user, svn_pwd, kitsu_user, kitsu_pwd, kitsu_host, user_role, task_type, self.status_callback), 
+            target=self._hilo_ejecucion_blender, 
+            args=(project_root, config_path, svn_user, svn_pwd, kitsu_user, kitsu_pwd, kitsu_host, user_role, task_type), 
             daemon=True
         ).start()
+
+    def _hilo_ejecucion_blender(self, project_root, config_path, svn_user, svn_pwd, kitsu_user, kitsu_pwd, kitsu_host, user_role, task_type):
+        """
+        Orquesta el ciclo de vida completo del software 3D.
+        Implementa la política del Testigo (Lock Passing) interceptando la apertura y cierre.
+        Sanea de manera automática el repositorio local (Crash Recovery) en cada inicio.
+        """
+        adapter = None
+        # FIX v0.4.4: Apuntar al archivo maestro, no al directorio.
+        ruta_bloqueo = "edit/master_edit.blend"
+        
+        # === PRE-FLIGHT: SANEAMIENTO PREVENTIVO (Crash Recovery) ===
+        try:
+            self.status_callback("Saneando repositorio local...", "yellow")
+            vcs_type = self.config_factory.get_vcs_adapter_type()
+            base_url = self.config_factory.get_vcs_repository_url()
+            repo_url = f"{base_url}/{project_root.name}/02_archivos_de_produccion"
+            workspace = project_root / "02_archivos_de_produccion"
+            
+            router = VCSRouter(vcs_type=vcs_type, repo_url=repo_url, workspace_dir=workspace)
+            adapter = router.get_adapter()
+            
+            # Limpia bloqueos SQLite locales provocados por apagones abruptos de la PC
+            adapter.cleanup()
+            
+        except Exception as e:
+            print(f"[CLEANUP WARNING] No se pudo ejecutar el saneamiento automático: {e}")
+
+        # Evaluamos si la tarea requiere bloqueo estricto (Departamento Editorial)
+        requiere_bloqueo = task_type.lower() in ["edit", "editorial", "montaje"]
+        
+        # Evaluamos la matriz de autorizaciones RBAC
+        cargo_usuario = self.auth_manager.get_user_position()
+        cargos_autorizados = ["editor", "director", "lead"]
+        roles_autorizados = ["td", "supervisor", "lead", "manager"]
+        
+        esta_autorizado = (user_role in roles_autorizados) or (cargo_usuario in cargos_autorizados)
+        
+        if requiere_bloqueo:
+            if esta_autorizado:
+                self.status_callback("Adquiriendo testigo de edición (SVN Lock)...", "yellow")
+                try:
+                    adapter.lock(path=ruta_bloqueo, username=svn_user, password=svn_pwd)
+                    self.status_callback("Testigo adquirido. Lanzando entorno de edición...", "green")
+                except Exception as e:
+                    # ANALISIS DE EXCEPCION: Bypass de seguridad
+                    err_msg = str(e).lower()
+                    if "already locked" in err_msg and svn_user.lower() in err_msg:
+                        print("[LOCK CRASH RECOVERY] El archivo ya estaba bloqueado por ti. Recuperando sesión.")
+                        self.status_callback("Sesión recuperada: El testigo ya pertenece a tu usuario.", "green")
+                    elif "was not found" in err_msg or "e155010" in err_msg or "unversioned" in err_msg or "e155008" in err_msg:
+                        print(f"[LOCK NEW FILE] Nodo no versionado o nuevo. Omitiendo bloqueo inicial. (Detalle: {e})")
+                        self.status_callback("Archivo nuevo detectado. Omitiendo bloqueo inicial.", "green")
+                    else:
+                        print(f"[LOCK ERROR FATAL] {e}")
+                        self.status_callback("Acceso denegado: El archivo está en uso por otro artista.", "red")
+                        return # Interrumpimos el flujo: Prohibido abrir si no obtenemos el testigo
+            else:
+                self.status_callback("Aviso: Modo Solo Lectura (No posees cargo de Editor).", "yellow")
+        else:
+            self.status_callback("Iniciando entorno aislado...", "yellow")
+
+        # Notificamos a la aplicación raíz que un entorno DCC está a punto de abrirse
+        app_root = self.winfo_toplevel()
+        if hasattr(app_root, "registrar_instancia"):
+            app_root.registrar_instancia(activa=True)
+
+        # Lanzar el proceso bloqueante de Blender
+        try:
+            lanzar_blender(project_root, config_path, svn_user, svn_pwd, kitsu_user, kitsu_pwd, kitsu_host, user_role, task_type, self.status_callback)
+        except Exception as e:
+            self.status_callback(f"Error crítico al ejecutar Blender: {str(e)}", "red")
+        finally:
+            # Notificamos a la aplicación raíz que el entorno DCC se ha cerrado
+            if hasattr(app_root, "registrar_instancia"):
+                app_root.registrar_instancia(activa=False)
+
+        # === POST-FLIGHT: Liberación obligatoria del recurso ===
+        if adapter and requiere_bloqueo and esta_autorizado:
+            self.status_callback("Liberando testigo de edición (SVN Unlock)...", "yellow")
+            try:
+                adapter.unlock(path=ruta_bloqueo, username=svn_user, password=svn_pwd)
+                self.status_callback("Testigo liberado con éxito. Sesión finalizada.", "green")
+            except Exception as e:
+                err_msg = str(e).lower()
+                if "was not found" in err_msg or "not locked" in err_msg or "e155010" in err_msg or "e155008" in err_msg:
+                    print("[UNLOCK INFO] Archivo no estaba bloqueado o es nuevo.")
+                    self.status_callback("Sesión finalizada. (Archivo nuevo o sin bloqueo)", "green")
+                else:
+                    print(f"[UNLOCK ERROR FATAL] {e}")
+                    self.status_callback("Advertencia: No se pudo liberar el archivo automáticamente en el servidor.", "red")
 
     def ejecutar_instalacion_hilo(self, project_root: Path):
         # === INTERCEPTOR JIT PARA INSTALAR ===

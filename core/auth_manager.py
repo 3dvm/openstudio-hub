@@ -1,4 +1,3 @@
-
 # =========================================================================================
 # OPENSTUDIOHUB
 # Módulo: core/auth_manager.py
@@ -8,7 +7,7 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.4.1
+# Versión del archivo: 0.4.2
 # =========================================================================================
 
 """
@@ -53,6 +52,8 @@ class AuthManager:
             self.user_data = gazu.client.get_current_user()
             
             # Guardar la sesión para no pedir clave mañana
+            # NOTA: En arquitecturas estrictas Zero-Disk esto se desactiva,
+            # pero se mantiene para desarrollo hasta la implementación del OS Keyring.
             self._save_session(tokens)
             return True, "Login exitoso"
             
@@ -118,6 +119,15 @@ class AuthManager:
             return "artist"
         else:
             return "artist"
+
+    def get_user_position(self) -> str:
+        """
+        Retorna el cargo ('position') del usuario autenticado en Kitsu.
+        Utilizado para determinar permisos de bloqueo físico (SVN Lock).
+        """
+        if not self.user_data:
+            return ""
+        return self.user_data.get("position", "").lower()
 
     def get_current_token(self) -> str:
         """
