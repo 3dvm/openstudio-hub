@@ -7,7 +7,7 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.4.0
+# Versión del archivo: 0.5.5
 # =========================================================================================
 
 """
@@ -39,10 +39,10 @@ class MacuareHub(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        # Título actualizado a la versión actual de la Fase 2
-        self.title("OpenStudio Hub - v0.4.0")
-        self.geometry("600x600")
-        self.resizable(False, False)
+        # Título actualizado a la versión actual
+        self.title("OpenStudio Hub - v0.5.5")
+        self.geometry("1000x700") # Ampliado para dar espacio al nuevo Dashboard y Activity Feed
+        self.minsize(800, 600)
 
         # Guardián de Procesos (Protección de Lock Passing)
         self.blender_instances = 0
@@ -57,10 +57,8 @@ class MacuareHub(ctk.CTk):
         self.config_factory = ConfigFactory(settings_path)
 
         # 2. Enrutador Inicial (State Machine)
-        if self.auth.login_with_saved_session():
-            self.mostrar_dashboard()
-        else:
-            self.mostrar_login()
+        # Política de Seguridad Estricta: Forzamos el Login siempre, ignorando tokens huérfanos.
+        self.mostrar_login()
 
     def registrar_instancia(self, activa: bool):
         """Incrementa o decrementa el contador de instancias de Blender activas."""
@@ -70,7 +68,7 @@ class MacuareHub(ctk.CTk):
             self.blender_instances = max(0, self.blender_instances - 1)
 
     def _on_closing(self):
-        """Intercepta el cierre de la ventana para proteger los bloqueos de SVN."""
+        """Intercepta el cierre de la ventana para proteger los bloqueos de SVN y limpiar la RAM/Disco."""
         if self.blender_instances > 0:
             messagebox.showwarning(
                 "Operación Bloqueada",
@@ -79,6 +77,9 @@ class MacuareHub(ctk.CTk):
                 "y evitar corrupción en la producción."
             )
         else:
+            # Destrucción absoluta de sesión al cerrar por la "X"
+            self.auth.logout()
+            self.vault.clear()
             self.destroy()
 
     def limpiar_pantalla(self):
@@ -103,8 +104,6 @@ class MacuareHub(ctk.CTk):
         self.limpiar_pantalla()
         
         rol = self.auth.get_user_role()
-        
-        # SOLUCIÓN: Tomamos el Workspace Root directo mapeado en settings.json sin alteraciones
         nextcloud_dir = self.config_factory.get_workspace_root()
         
         if rol in ["td", "supervisor"]:

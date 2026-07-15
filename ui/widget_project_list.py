@@ -1,156 +1,245 @@
 # =========================================================================================
 # OPENSTUDIOHUB
 # Módulo: ui/widget_project_list.py
-# Rol Arquitectónico: UI Component / JIT Interceptor
+# Rol Arquitectónico: UI Component / JIT Interceptor / Artist Dashboard
 # =========================================================================================
 # Copyright (c) 2026 Ernesto Del Valle Macuare. Todos los derechos reservados.
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.4.4
+# Versión del archivo: 0.5.8
 # =========================================================================================
 
 """
-Componente reutilizable que escanea y despliega la lista de proyectos.
-Verifica el estado de instalación y las credenciales en RAM antes de proceder,
-actuando como el interceptor Just-In-Time (JIT) principal de la interfaz.
-Integra la política de "Paso del Testigo" (Lock Passing) para archivos críticos
-y el motor asíncrono de auto-recuperación ante caídas físicas (Crash Recovery).
+Componente del panel del artista que sincroniza dinámicamente las tareas asignadas.
+Actúa como un Controlador MVC: Renderiza pestañas de filtrado (Tabs) por proyecto,
+instancia las tarjetas modulares (TaskCard) y orquesta el ciclo de vida de Blender.
 """
 
 import json
 import threading
 import customtkinter as ctk
 from pathlib import Path
+
 from core.env_launcher import lanzar_blender
 from core.local_installer import LocalInstaller
 from core.vcs_router import VCSRouter
 from ui.window_svn_login import SVNLoginWindow
+from ui.components.task_card import TaskCard
 
-class ProjectListWidget(ctk.CTkScrollableFrame):
+# Cambiamos la herencia a CTkFrame para anclar las pestañas en la parte superior
+class ProjectListWidget(ctk.CTkFrame):
     def __init__(self, parent, nextcloud_dir: Path, auth_manager, vault_manager, config_factory, status_callback, **kwargs):
-        super().__init__(parent, **kwargs)
+        super().__init__(parent, fg_color="transparent", **kwargs)
         self.nextcloud_dir = nextcloud_dir
         
-        # === INYECCION DE DEPENDENCIAS ===
+        # === INYECCIÓN DE DEPENDENCIAS ===
         self.auth_manager = auth_manager
         self.vault = vault_manager
         self.config_factory = config_factory
         self.status_callback = status_callback
         
-        # Inicializamos el motor de instalacion local inyectándole el factory
         self.installer = LocalInstaller(nextcloud_dir, config_factory)
+        
+        # === ESTADO DEL COMPONENTE ===
+        self.all_tasks = []
+        self.local_projects_map = {}
+        self.current_filter = "All"
+        
+        # === ESTRUCTURA UI ===
+        # 1. Contenedor de Pestañas (Horizontal)
+        self.tabs_container = ctk.CTkScrollableFrame(self, orientation="horizontal", height=55, fg_color="transparent")
+        self.tabs_container.pack(fill="x", padx=10, pady=(0, 5))
+        
+        # 2. Etiqueta de cabecera
+        self.header_label = ctk.CTkLabel(
+            self, text="Your Tasks", font=ctk.CTkFont(size=20, weight="bold"), text_color="#E2E8F0"
+        )
+        self.header_label.pack(anchor="w", padx=15, pady=(5, 10))
+        
+        # 3. Contenedor de Tarjetas (Vertical Scrolleable)
+        self.cards_container = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.cards_container.pack(fill="both", expand=True)
         
         self.cargar_proyectos()
 
-    def limpiar_lista(self):
-        """Borra todos los widgets internos para poder refrescar la lista de forma limpia."""
-        for widget in self.winfo_children():
-            widget.destroy()
+    # ---------------------------------------------------------
+    # FLUJO DE CARGA DE DATOS (ASÍNCRONO)
+    # ---------------------------------------------------------
 
     def cargar_proyectos(self):
-        self.limpiar_lista()
-        proyectos_encontrados = 0
+        """Inicia el proceso de carga en un hilo secundario para no congelar la UI."""
+        for widget in self.cards_container.winfo_children():
+            widget.destroy()
+            
+        self.loading_label = ctk.CTkLabel(
+            self.cards_container, text="Sincronizando tareas con la base de datos...", 
+            font=ctk.CTkFont(size=14, slant="italic"), text_color="#94A3B8"
+        )
+        self.loading_label.pack(pady=40)
         
+        self.status_callback("Obteniendo tareas asignadas desde Kitsu...", "white")
+        threading.Thread(target=self._hilo_cargar_datos, daemon=True).start()
+
+    def _hilo_cargar_datos(self):
+        """Hilo secundario que consulta la API y mapea los proyectos locales."""
+        tasks = self.auth_manager.get_assigned_tasks()
+        
+        local_projects_map = {}
         if self.nextcloud_dir.exists():
             for carpeta in self.nextcloud_dir.iterdir():
                 if carpeta.is_dir():
-                    # La semilla global ahora vive en 05_config_estudio
                     init_path = carpeta / "05_config_estudio" / "project_init.json"
-                    
-                    # Soporte para proyectos antiguos (Legacy) creados con scripts anteriores
-                    config_legacy_path = carpeta / "06_conf_LOCAL" / "project_config.json"
-                    
                     if init_path.exists():
-                        self.procesar_proyecto_hub(carpeta, init_path)
-                        proyectos_encontrados += 1
-                    elif config_legacy_path.exists():
-                        # Proyecto antiguo pre-Hub: se asume ya instalado y listo para abrir
-                        with open(config_legacy_path, 'r', encoding='utf-8') as f:
-                            data_legacy = json.load(f)
-                        
-                        nombre_legacy = data_legacy.get("project_name", carpeta.name)
-                        version_legacy = data_legacy.get("blender_version", "??")
-                        
-                        self.crear_boton_abrir(carpeta, config_legacy_path, f"{nombre_legacy} [Blender {version_legacy}]")
-                        proyectos_encontrados += 1
+                        try:
+                            with open(init_path, 'r', encoding='utf-8') as f:
+                                data = json.load(f)
+                            nombre = data.get("project_name", carpeta.name)
+                            local_projects_map[nombre.lower()] = carpeta
+                        except Exception:
+                            pass
+                            
+        self.after(0, self._almacenar_y_renderizar, tasks, local_projects_map)
 
-        if proyectos_encontrados == 0:
-            self.status_callback("No se encontraron proyectos activos sincronizados.", "gray")
-        else:
-            self.status_callback(f"Sincronizacion completada. Total de proyectos: {proyectos_encontrados}", "white")
-
-    def procesar_proyecto_hub(self, project_root: Path, init_path: Path):
-        """Determina dinamicamente si el proyecto necesita instalacion o si ya puede abrirse."""
-        with open(init_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+    def _almacenar_y_renderizar(self, tasks: list, local_projects_map: dict):
+        """Guarda los datos en el estado del componente y detona el dibujo."""
+        if hasattr(self, 'loading_label'):
+            self.loading_label.destroy()
             
-        nombre = data.get("project_name", project_root.name)
-        version = data.get("blender_version", "??")
+        self.all_tasks = tasks
+        self.local_projects_map = local_projects_map
         
-        # Comprobar si el artista ya configuro su entorno local en esta PC
-        esta_instalado = self.installer.verificar_instalacion(project_root)
-        
-        if esta_instalado:
-            config_local_path = project_root / "06_conf_LOCAL" / "project_config.json"
-            self.crear_boton_abrir(project_root, config_local_path, f"{nombre} [Blender {version}]")
+        # Validar si el filtro actual sigue existiendo (por si se cerró un proyecto en Kitsu)
+        active_projects = {t.get("project_name", "Unknown Project") for t in tasks}
+        if self.current_filter != "All" and self.current_filter not in active_projects:
+            self.current_filter = "All"
+
+        self._render_tabs()
+        self._render_tasks()
+
+    # ---------------------------------------------------------
+    # RENDERIZADO DE PESTAÑAS (TABS)
+    # ---------------------------------------------------------
+
+    def _render_tabs(self):
+        """Construye los botones de filtrado (píldoras) en la parte superior."""
+        for widget in self.tabs_container.winfo_children():
+            widget.destroy()
+
+        if not self.all_tasks:
+            # Ocultar contenedor de tabs si no hay tareas
+            self.tabs_container.pack_forget() 
+            return
         else:
-            self.crear_boton_instalar(project_root, f"{nombre} [Requiere Configuracion]")
+            # Asegurar que esté visible
+            self.tabs_container.pack(fill="x", padx=10, pady=(0, 5), before=self.header_label)
 
-    def crear_boton_abrir(self, project_root: Path, config_path: Path, label_text: str):
-        """Genera un boton para lanzar directamente el entorno aislado de Blender."""
+        # Contar tareas por proyecto
+        project_counts = {}
+        for t in self.all_tasks:
+            p_name = t.get("project_name", "Unknown Project")
+            project_counts[p_name] = project_counts.get(p_name, 0) + 1
+
+        # Tab "All Projects"
+        self._crear_tab_btn("All", len(self.all_tasks))
+
+        # Tabs individuales por proyecto
+        for p_name, count in project_counts.items():
+            self._crear_tab_btn(p_name, count)
+
+    def _crear_tab_btn(self, name: str, count: int):
+        is_active = (self.current_filter == name)
+
+        # Estilo AAA: Verde resaltado si está activo, Gris oscuro si está inactivo
+        fg_color = "#064E3B" if is_active else "#1E293B"
+        border_color = "#10B981" if is_active else "#334155"
+        text_color = "#10B981" if is_active else "#94A3B8"
+        hover_color = "#047857" if is_active else "#334155"
+
+        btn_text = f"All Projects  {count}" if name == "All" else f"{name}  {count}"
+
         btn = ctk.CTkButton(
-            self, 
-            text=f"Abrir: {label_text}", 
-            font=ctk.CTkFont(size=13),
-            height=40,
-            command=lambda: self.iniciar_proyecto_hilo(project_root, config_path)
+            self.tabs_container, text=btn_text, fg_color=fg_color,
+            border_width=1, border_color=border_color, text_color=text_color,
+            hover_color=hover_color, corner_radius=20, height=32,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=lambda n=name: self._seleccionar_tab(n)
         )
-        btn.pack(pady=5, fill="x", padx=10)
+        btn.pack(side="left", padx=5)
 
-    def crear_boton_instalar(self, project_root: Path, label_text: str):
-        """Genera un boton contextual llamativo para desplegar la instalacion local."""
-        btn = ctk.CTkButton(
-            self, 
-            text=f"Instalar: {label_text}", 
-            font=ctk.CTkFont(size=13, weight="bold"),
-            fg_color="#D97706",      # Color ambar/naranja corporativo sobrio y limpio
-            hover_color="#B45309",
-            height=40,
-            command=lambda: self.ejecutar_instalacion_hilo(project_root)
-        )
-        btn.pack(pady=5, fill="x", padx=10)
+    def _seleccionar_tab(self, name: str):
+        """Callback al hacer clic en una pestaña."""
+        self.current_filter = name
+        self._render_tabs()   # Redibujar para actualizar colores (Glow)
+        self._render_tasks()  # Redibujar tarjetas filtradas
 
-    def iniciar_proyecto_hilo(self, project_root: Path, config_path: Path):
-        # === INTERCEPTOR JIT PARA ABRIR ===
+    # ---------------------------------------------------------
+    # RENDERIZADO DE TARJETAS (CARDS)
+    # ---------------------------------------------------------
+
+    def _render_tasks(self):
+        """Filtra y dibuja las tarjetas correspondientes."""
+        for widget in self.cards_container.winfo_children():
+            widget.destroy()
+
+        if not self.all_tasks:
+            msg = ctk.CTkLabel(
+                self.cards_container, text="No tienes tareas pendientes (TODO/WIP). ¡Buen trabajo!", 
+                font=ctk.CTkFont(size=14), text_color="#10B981"
+            )
+            msg.pack(pady=40)
+            self.status_callback("Sincronización completada. Tablero limpio.", "white")
+            return
+
+        # Aplicar el filtro seleccionado
+        filtered_tasks = [
+            t for t in self.all_tasks 
+            if self.current_filter == "All" or t.get("project_name") == self.current_filter
+        ]
+
+        for task in filtered_tasks:
+            proyecto_nombre = task["project_name"]
+            project_root = self.local_projects_map.get(proyecto_nombre.lower())
+            
+            esta_instalado = False
+            if project_root:
+                esta_instalado = self.installer.verificar_instalacion(project_root)
+                
+            tarjeta = TaskCard(
+                parent=self.cards_container,
+                task_data=task,
+                project_root=project_root,
+                is_installed=esta_instalado,
+                auth_manager=self.auth_manager,
+                on_launch_callback=self.iniciar_proyecto_hilo,
+                on_install_callback=self.ejecutar_instalacion_hilo
+            )
+            tarjeta.pack(pady=10, padx=15, fill="x")
+            
+        self.status_callback(f"Tablero filtrado: {len(filtered_tasks)} tareas visibles.", "green")
+
+    # ---------------------------------------------------------
+    # INTERCEPTORES Y ORQUESTADORES DE HILOS (LÓGICA CORE)
+    # ---------------------------------------------------------
+
+    def iniciar_proyecto_hilo(self, project_root: Path, config_path: Path, task_data: dict):
         if not self.vault.has_svn_credentials():
             self.status_callback("Esperando credenciales de repositorio...", "yellow")
-            self.update_idletasks() # FIX: Forzar renderizado antes de secuestrar el hilo con la modal
-            
+            self.update_idletasks() 
             SVNLoginWindow(
                 parent=self.winfo_toplevel(),
                 vault_manager=self.vault,
-                on_success_callback=lambda: self.iniciar_proyecto_hilo(project_root, config_path)
+                on_success_callback=lambda: self.iniciar_proyecto_hilo(project_root, config_path, task_data)
             )
             return
 
-        # Extraemos credenciales de SVN y Kitsu de forma segura desde la memoria RAM
         svn_user, svn_pwd = self.vault.get_svn_credentials()
         kitsu_user, kitsu_pwd = self.vault.get_kitsu_credentials()
-        
-        # Obtenemos metadatos desde el AuthManager
         kitsu_host = self.auth_manager.kitsu_host
         user_role = self.auth_manager.get_user_role()
 
-        # Input interactivo temporal para capturar el TaskType
-        dialog = ctk.CTkInputDialog(text="Ingrese el Tipo de Tarea\n(ej. animation, edit, rigging):", title="Context-Aware Tooling")
-        task_type = dialog.get_input()
-        
-        if not task_type:
-            self.status_callback("Lanzamiento cancelado por el usuario.", "red")
-            return
+        task_type = task_data.get("task_type_name", "unknown")
 
-        # Despachamos el ciclo de vida del DCC a un hilo secundario dedicado
         threading.Thread(
             target=self._hilo_ejecucion_blender, 
             args=(project_root, config_path, svn_user, svn_pwd, kitsu_user, kitsu_pwd, kitsu_host, user_role, task_type), 
@@ -158,16 +247,9 @@ class ProjectListWidget(ctk.CTkScrollableFrame):
         ).start()
 
     def _hilo_ejecucion_blender(self, project_root, config_path, svn_user, svn_pwd, kitsu_user, kitsu_pwd, kitsu_host, user_role, task_type):
-        """
-        Orquesta el ciclo de vida completo del software 3D.
-        Implementa la política del Testigo (Lock Passing) interceptando la apertura y cierre.
-        Sanea de manera automática el repositorio local (Crash Recovery) en cada inicio.
-        """
         adapter = None
-        # FIX v0.4.4: Apuntar al archivo maestro, no al directorio.
         ruta_bloqueo = "edit/master_edit.blend"
         
-        # === PRE-FLIGHT: SANEAMIENTO PREVENTIVO (Crash Recovery) ===
         try:
             self.status_callback("Saneando repositorio local...", "yellow")
             vcs_type = self.config_factory.get_vcs_adapter_type()
@@ -177,21 +259,15 @@ class ProjectListWidget(ctk.CTkScrollableFrame):
             
             router = VCSRouter(vcs_type=vcs_type, repo_url=repo_url, workspace_dir=workspace)
             adapter = router.get_adapter()
-            
-            # Limpia bloqueos SQLite locales provocados por apagones abruptos de la PC
             adapter.cleanup()
-            
         except Exception as e:
             print(f"[CLEANUP WARNING] No se pudo ejecutar el saneamiento automático: {e}")
 
-        # Evaluamos si la tarea requiere bloqueo estricto (Departamento Editorial)
         requiere_bloqueo = task_type.lower() in ["edit", "editorial", "montaje"]
-        
-        # Evaluamos la matriz de autorizaciones RBAC
         cargo_usuario = self.auth_manager.get_user_position()
+        
         cargos_autorizados = ["editor", "director", "lead"]
         roles_autorizados = ["td", "supervisor", "lead", "manager"]
-        
         esta_autorizado = (user_role in roles_autorizados) or (cargo_usuario in cargos_autorizados)
         
         if requiere_bloqueo:
@@ -201,39 +277,31 @@ class ProjectListWidget(ctk.CTkScrollableFrame):
                     adapter.lock(path=ruta_bloqueo, username=svn_user, password=svn_pwd)
                     self.status_callback("Testigo adquirido. Lanzando entorno de edición...", "green")
                 except Exception as e:
-                    # ANALISIS DE EXCEPCION: Bypass de seguridad
                     err_msg = str(e).lower()
                     if "already locked" in err_msg and svn_user.lower() in err_msg:
-                        print("[LOCK CRASH RECOVERY] El archivo ya estaba bloqueado por ti. Recuperando sesión.")
                         self.status_callback("Sesión recuperada: El testigo ya pertenece a tu usuario.", "green")
                     elif "was not found" in err_msg or "e155010" in err_msg or "unversioned" in err_msg or "e155008" in err_msg:
-                        print(f"[LOCK NEW FILE] Nodo no versionado o nuevo. Omitiendo bloqueo inicial. (Detalle: {e})")
                         self.status_callback("Archivo nuevo detectado. Omitiendo bloqueo inicial.", "green")
                     else:
-                        print(f"[LOCK ERROR FATAL] {e}")
                         self.status_callback("Acceso denegado: El archivo está en uso por otro artista.", "red")
-                        return # Interrumpimos el flujo: Prohibido abrir si no obtenemos el testigo
+                        return
             else:
                 self.status_callback("Aviso: Modo Solo Lectura (No posees cargo de Editor).", "yellow")
         else:
             self.status_callback("Iniciando entorno aislado...", "yellow")
 
-        # Notificamos a la aplicación raíz que un entorno DCC está a punto de abrirse
         app_root = self.winfo_toplevel()
         if hasattr(app_root, "registrar_instancia"):
             app_root.registrar_instancia(activa=True)
 
-        # Lanzar el proceso bloqueante de Blender
         try:
             lanzar_blender(project_root, config_path, svn_user, svn_pwd, kitsu_user, kitsu_pwd, kitsu_host, user_role, task_type, self.status_callback)
         except Exception as e:
             self.status_callback(f"Error crítico al ejecutar Blender: {str(e)}", "red")
         finally:
-            # Notificamos a la aplicación raíz que el entorno DCC se ha cerrado
             if hasattr(app_root, "registrar_instancia"):
                 app_root.registrar_instancia(activa=False)
 
-        # === POST-FLIGHT: Liberación obligatoria del recurso ===
         if adapter and requiere_bloqueo and esta_autorizado:
             self.status_callback("Liberando testigo de edición (SVN Unlock)...", "yellow")
             try:
@@ -242,56 +310,38 @@ class ProjectListWidget(ctk.CTkScrollableFrame):
             except Exception as e:
                 err_msg = str(e).lower()
                 if "was not found" in err_msg or "not locked" in err_msg or "e155010" in err_msg or "e155008" in err_msg:
-                    print("[UNLOCK INFO] Archivo no estaba bloqueado o es nuevo.")
                     self.status_callback("Sesión finalizada. (Archivo nuevo o sin bloqueo)", "green")
                 else:
-                    print(f"[UNLOCK ERROR FATAL] {e}")
                     self.status_callback("Advertencia: No se pudo liberar el archivo automáticamente en el servidor.", "red")
 
-    def ejecutar_instalacion_hilo(self, project_root: Path):
-        # === INTERCEPTOR JIT PARA INSTALAR ===
+    def ejecutar_instalacion_hilo(self, project_root: Path, task_data: dict):
         if not self.vault.has_svn_credentials():
             self.status_callback("Esperando credenciales de repositorio...", "yellow")
-            self.update_idletasks() # FIX: Forzar renderizado antes de secuestrar el hilo con la modal
-            
+            self.update_idletasks() 
             SVNLoginWindow(
                 parent=self.winfo_toplevel(),
                 vault_manager=self.vault,
-                on_success_callback=lambda: self.ejecutar_instalacion_hilo(project_root)
+                on_success_callback=lambda: self.ejecutar_instalacion_hilo(project_root, task_data)
             )
             return
             
-        # Extraemos el rol dinámicamente antes de lanzar la descarga
         user_role = self.auth_manager.get_user_role()
-        task_metadata = None
         
-        # === JIT INTERCEPTOR PARA VENDORS (Traducción de Tarea) ===
-        if user_role == "vendor":
-            dialog = ctk.CTkInputDialog(text="[Vendor Jailing] Ingrese el ID de su Tarea en Kitsu:", title="Validación Sparse")
-            task_id = dialog.get_input()
-            
-            if not task_id:
-                self.status_callback("Instalación cancelada por el usuario.", "red")
-                return
-                
-            self.status_callback("Consultando jerarquía de tarea en Kitsu...", "yellow")
-            self.update_idletasks()
-            
-            task_metadata = self.auth_manager.get_task_metadata(task_id)
-            if not task_metadata:
-                self.status_callback("Error: Tarea no encontrada o metadatos incompletos.", "red")
-                return
-
-        # Despachamos el hilo pasando el contexto completo
         threading.Thread(
             target=self._hilo_instalacion, 
-            args=(project_root, user_role, task_metadata), 
+            args=(project_root, user_role, task_data), 
             daemon=True
         ).start()
 
-    def _hilo_instalacion(self, project_root: Path, user_role: str, task_metadata: dict):
-        # Extraemos las claves de la RAM para que el motor haga el checkout silencioso
+    def _hilo_instalacion(self, project_root: Path, user_role: str, task_data: dict):
         svn_user, svn_pwd = self.vault.get_svn_credentials()
+        
+        task_metadata = None
+        if user_role == "vendor":
+            task_id = task_data.get("task_id")
+            if task_id:
+                self.status_callback("Resolviendo grafo de dependencias de la Tarea...", "yellow")
+                task_metadata = self.auth_manager.get_task_metadata(task_id)
         
         exito, mensaje = self.installer.instalar_entorno(
             project_root, svn_user, svn_pwd, self.status_callback,
@@ -303,6 +353,4 @@ class ProjectListWidget(ctk.CTkScrollableFrame):
             self.after(500, self.cargar_proyectos)
         else:
             self.status_callback(mensaje, "red")
-            # Issue 4: Sincronización asíncrona fallida. Purgamos de inmediato la RAM 
-            # para obligar a la interfaz a desplegar de nuevo el modal JIT en el próximo intento.
             self.vault.clear()

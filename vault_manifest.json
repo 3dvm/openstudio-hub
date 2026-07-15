@@ -1,0 +1,45 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "description": "OpenStudio Hub - Repositorio Maestro de Herramientas y Dependencias",
+    "last_updated": "2026-07-15"
+  },
+  "addons": {
+    "openstudio_toolkit": {
+      "name": "OpenStudio Toolkit",
+      "version": "0.5.7",
+      "path": "addons/openstudio_toolkit.zip",
+      "mandatory": true,
+      "description": "Core Pipeline, Gatekeeper y Telemetría IA"
+    },
+    "blender_kitsu": {
+      "name": "Blender Kitsu",
+      "version": "1.5.0",
+      "path": "addons/blender_kitsu.zip",
+      "mandatory": true,
+      "description": "Integración oficial con la API de Gazu (SSoT)"
+    },
+    "asset_pipeline": {
+      "name": "Asset Pipeline",
+      "version": "1.2.0",
+      "path": "addons/asset_pipeline.zip",
+      "mandatory": true,
+      "description": "Gestor de metadatos y Shot Builder"
+    },
+    "blender_log": {
+      "name": "Blender Log",
+      "version": "1.0.0",
+      "path": "addons/blender_log.zip",
+      "mandatory": true,
+      "description": "Motor de QA Pasivo y notificaciones UI persistentes"
+    }
+  },
+  "templates": {
+    "openstudio_standard": {
+      "name": "OpenStudio Standard Production",
+      "path": "templates/openstudio_standard.zip",
+      "requires": ["openstudio_toolkit", "blender_kitsu", "asset_pipeline", "blender_log"]
+    }
+  },
+  "brushes": {}
+}
