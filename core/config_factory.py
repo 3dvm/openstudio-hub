@@ -7,7 +7,7 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.5.9
+# Versión del archivo: 0.6.0
 # =========================================================================================
 
 import json
@@ -18,6 +18,7 @@ class ConfigFactory:
     def __init__(self, config_path: Path):
         self.config_path = config_path
         self._config = {}
+        self._volatile_identity = {}  # Caché temporal en RAM para identidad de Kitsu
         self._load_config()
 
     def _load_config(self):
@@ -31,6 +32,30 @@ class ConfigFactory:
     def get_raw_config(self) -> dict:
         """Devuelve el diccionario completo en caso de necesitar consultas sin mapear."""
         return self._config
+
+    # ---------------------------------------------------------
+    # IDENTIDAD VOLÁTIL (SSO & B2B Branding)
+    # ---------------------------------------------------------
+
+    def set_volatile_studio_identity(self, identity_data: dict):
+        """Guarda temporalmente en RAM la identidad visual descargada desde Kitsu."""
+        self._volatile_identity = identity_data
+
+    def get_studio_name(self) -> str:
+        """Retorna el nombre del estudio priorizando el caché volátil de Kitsu."""
+        if "studio_name" in self._volatile_identity and self._volatile_identity["studio_name"]:
+            return self._volatile_identity["studio_name"]
+        
+        # Fallback al archivo estático settings.json
+        return self._config.get("studio_profile", {}).get("name", "OPENSTUDIO HUB")
+
+    def get_user_avatar_path(self) -> str | None:
+        """Retorna la ruta física del avatar descargado si existe en RAM."""
+        return self._volatile_identity.get("avatar_path")
+
+    # ---------------------------------------------------------
+    # ENRUTAMIENTO DE SISTEMA
+    # ---------------------------------------------------------
 
     def _get_current_os(self) -> str:
         """Interroga al sistema host para resolver el Agnosticismo OS."""

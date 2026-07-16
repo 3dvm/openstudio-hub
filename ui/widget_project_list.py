@@ -7,14 +7,14 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.5.9
+# Versión del archivo: 0.6.0
 # =========================================================================================
 
 """
 Componente del panel del artista que sincroniza dinámicamente las tareas asignadas.
-Actúa como un Controlador MVC: Renderiza pestañas de filtrado (Tabs) por proyecto,
+Actúa como un Controlador MVC: Renderiza una barra lateral de filtrado por proyecto,
 instancia las tarjetas modulares (TaskCard) y orquesta el ciclo de vida de Blender.
-Se apoya en PathResolver para inyectar la navegación profunda (Deep Linking).
+Implementa validación bidireccional (SSoT) contra Kitsu.
 """
 
 import json
@@ -46,33 +46,54 @@ class ProjectListWidget(ctk.CTkFrame):
         # === ESTADO DEL COMPONENTE ===
         self.all_tasks = []
         self.local_projects_map = {}
+        self.active_kitsu_projects = {} # Mapeo SSoT {nombre: uuid}
         self.current_filter = "All"
         self._last_refresh_time = 0
         
-        # === ESTRUCTURA UI ===
-        # 1. Contenedor Superior (Cabecera y Botón Refresh)
-        self.header_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.header_frame.pack(fill="x", padx=15, pady=(5, 5))
+        # === ESTRUCTURA UI (GRID LAYOUT) ===
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=0) # Columna 0: Barra Lateral (Filtros)
+        self.grid_columnconfigure(1, weight=1) # Columna 1: Contenido Principal (Tarjetas)
+        
+        # 1. Contenedor Lateral Izquierdo (Sidebar de Proyectos)
+        self.sidebar_frame = ctk.CTkFrame(self, width=220, corner_radius=8, fg_color="#1A1A1A")
+        self.sidebar_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 15), pady=5)
+        self.sidebar_frame.grid_propagate(False) # Forzar el ancho mínimo
+        
+        self.lbl_filtros = ctk.CTkLabel(
+            self.sidebar_frame, text="📁 MIS PROYECTOS", 
+            font=ctk.CTkFont(size=12, weight="bold"), text_color="#94A3B8"
+        )
+        self.lbl_filtros.pack(pady=(20, 10), padx=15, anchor="w")
+        
+        self.tabs_container = ctk.CTkScrollableFrame(self.sidebar_frame, fg_color="transparent")
+        self.tabs_container.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # 2. Contenedor Principal Derecho
+        self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.main_frame.grid(row=0, column=1, sticky="nsew", pady=5)
+        
+        # 2.1 Cabecera del Contenedor Principal
+        self.header_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        self.header_frame.pack(fill="x", padx=5, pady=(5, 10))
         
         self.header_label = ctk.CTkLabel(
-            self.header_frame, text="Your Tasks", font=ctk.CTkFont(size=20, weight="bold"), text_color="#E2E8F0"
+            self.header_frame, text="Tus Tareas Asignadas", 
+            font=ctk.CTkFont(size=20, weight="bold"), text_color="#E2E8F0"
         )
         self.header_label.pack(side="left")
         
         self.refresh_btn = ctk.CTkButton(
             self.header_frame, text="↻ Recargar", width=100, height=28,
-            fg_color="#1E293B", hover_color="#334155",
+            fg_color="transparent", border_width=1, border_color="#334155",
+            text_color="#94A3B8", hover_color="#1E293B",
             font=ctk.CTkFont(size=12, weight="bold"),
             command=self._forzar_recarga
         )
         self.refresh_btn.pack(side="right")
         
-        # 2. Contenedor de Pestañas (Horizontal)
-        self.tabs_container = ctk.CTkScrollableFrame(self, orientation="horizontal", height=55, fg_color="transparent")
-        self.tabs_container.pack(fill="x", padx=10, pady=(0, 5))
-        
-        # 3. Contenedor de Tarjetas (Vertical Scrolleable)
-        self.cards_container = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        # 2.2 Contenedor de Tarjetas (Vertical Scrolleable)
+        self.cards_container = ctk.CTkScrollableFrame(self.main_frame, fg_color="transparent")
         self.cards_container.pack(fill="both", expand=True)
         
         self.cargar_proyectos()
@@ -103,13 +124,18 @@ class ProjectListWidget(ctk.CTkFrame):
         )
         self.loading_label.pack(pady=40)
         
-        self.status_callback("Obteniendo tareas asignadas desde Kitsu...", "white")
+        self.status_callback("Verificando integridad de proyectos contra Kitsu...", "white")
         threading.Thread(target=self._hilo_cargar_datos, daemon=True).start()
 
     def _hilo_cargar_datos(self):
-        """Hilo secundario que consulta la API y mapea los proyectos locales."""
+        """Hilo secundario que consulta la API y mapea los proyectos locales (Validación Bidireccional)."""
+        # 1. Obtener SSoT (Single Source of Truth) desde el Servidor
+        kitsu_projects_map = self.auth_manager.obtener_proyectos_activos()
+        
+        # 2. Cargar Tareas del Usuario
         tasks = self.auth_manager.get_assigned_tasks()
         
+        # 3. Mapear Proyectos Locales y Contrastar
         local_projects_map = {}
         if self.nextcloud_dir.exists():
             for carpeta in self.nextcloud_dir.iterdir():
@@ -119,20 +145,26 @@ class ProjectListWidget(ctk.CTkFrame):
                         try:
                             with open(init_path, 'r', encoding='utf-8') as f:
                                 data = json.load(f)
-                            nombre = data.get("project_name", carpeta.name)
-                            local_projects_map[nombre.lower()] = carpeta
+                            nombre = data.get("project_name", carpeta.name).lower()
+                            
+                            # Validar que el proyecto local existe y está ACTIVO en Kitsu (Issue 6)
+                            if nombre in kitsu_projects_map:
+                                local_projects_map[nombre] = carpeta
+                            else:
+                                print(f"[WARNING] Proyecto local '{nombre}' ignorado (No activo en Kitsu).")
                         except Exception:
                             pass
                             
-        self.after(0, self._almacenar_y_renderizar, tasks, local_projects_map)
+        self.after(0, self._almacenar_y_renderizar, tasks, local_projects_map, kitsu_projects_map)
 
-    def _almacenar_y_renderizar(self, tasks: list, local_projects_map: dict):
+    def _almacenar_y_renderizar(self, tasks: list, local_projects_map: dict, kitsu_projects_map: dict):
         """Guarda los datos en el estado del componente y detona el dibujo."""
         if hasattr(self, 'loading_label'):
             self.loading_label.destroy()
             
         self.all_tasks = tasks
         self.local_projects_map = local_projects_map
+        self.active_kitsu_projects = kitsu_projects_map
         
         active_projects = {t.get("project_name", "Unknown Project") for t in tasks}
         if self.current_filter != "All" and self.current_filter not in active_projects:
@@ -142,7 +174,7 @@ class ProjectListWidget(ctk.CTkFrame):
         self._render_tasks()
 
     # ---------------------------------------------------------
-    # RENDERIZADO DE PESTAÑAS (TABS)
+    # RENDERIZADO DE BARRA LATERAL (TABS VERTICALES)
     # ---------------------------------------------------------
 
     def _render_tabs(self):
@@ -150,15 +182,12 @@ class ProjectListWidget(ctk.CTkFrame):
             widget.destroy()
 
         if not self.all_tasks:
-            self.tabs_container.pack_forget() 
+            lbl_empty = ctk.CTkLabel(
+                self.tabs_container, text="Sin proyectos activos", 
+                text_color="#64748B", font=ctk.CTkFont(slant="italic")
+            )
+            lbl_empty.pack(pady=20)
             return
-        else:
-            # FIX TclError: Repackaging components sequentially to maintain proper hierarchy
-            self.tabs_container.pack_forget()
-            self.cards_container.pack_forget()
-            
-            self.tabs_container.pack(fill="x", padx=10, pady=(0, 5))
-            self.cards_container.pack(fill="both", expand=True)
 
         project_counts = {}
         for t in self.all_tasks:
@@ -173,21 +202,19 @@ class ProjectListWidget(ctk.CTkFrame):
     def _crear_tab_btn(self, name: str, count: int):
         is_active = (self.current_filter == name)
 
-        fg_color = "#064E3B" if is_active else "#1E293B"
-        border_color = "#10B981" if is_active else "#334155"
+        fg_color = "#064E3B" if is_active else "transparent"
         text_color = "#10B981" if is_active else "#94A3B8"
         hover_color = "#047857" if is_active else "#334155"
 
-        btn_text = f"All Projects  {count}" if name == "All" else f"{name}  {count}"
+        btn_text = f"Todas las Tareas ({count})" if name == "All" else f"{name} ({count})"
 
         btn = ctk.CTkButton(
             self.tabs_container, text=btn_text, fg_color=fg_color,
-            border_width=1, border_color=border_color, text_color=text_color,
-            hover_color=hover_color, corner_radius=20, height=32,
-            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=text_color, hover_color=hover_color, corner_radius=6, height=35,
+            font=ctk.CTkFont(size=13, weight="bold"), anchor="w",
             command=lambda n=name: self._seleccionar_tab(n)
         )
-        btn.pack(side="left", padx=5)
+        btn.pack(side="top", fill="x", pady=2)
 
     def _seleccionar_tab(self, name: str):
         self.current_filter = name
@@ -222,8 +249,12 @@ class ProjectListWidget(ctk.CTkFrame):
         prod_folder = self.config_factory.get_production_folder_name()
 
         for task in filtered_tasks:
-            proyecto_nombre = task["project_name"]
-            project_root = self.local_projects_map.get(proyecto_nombre.lower())
+            proyecto_nombre = task["project_name"].lower()
+            project_root = self.local_projects_map.get(proyecto_nombre)
+            
+            # Reinyectar el UUID verificado desde Kitsu para evitar ambigüedades
+            if proyecto_nombre in self.active_kitsu_projects:
+                task["project_id"] = self.active_kitsu_projects[proyecto_nombre]
             
             esta_instalado = False
             can_work = True
@@ -238,17 +269,16 @@ class ProjectListWidget(ctk.CTkFrame):
                         if relative_target:
                             target_file = project_root / prod_folder / "pro" / relative_target
                             
-                            # LOGS DE OBSERVABILIDAD INYECTADOS
-                            print(f"[OPENSTUDIO DEBUG] Evaluando Tarea: {task.get('entity_name', 'Unknown')}")
-                            print(f"[OPENSTUDIO DEBUG] Path esperado: {target_file}")
-                            print(f"[OPENSTUDIO DEBUG] ¿Existe en disco?: {target_file.exists()}")
-                            
                             if not target_file.exists() and not is_admin:
                                 can_work = False
                                 blocked_reason = "Falta archivo (Requiere Setup)"
                     except Exception as e:
                         print(f"[OPENSTUDIO DEBUG] Error interno del PathResolver: {e}")
                         pass
+            else:
+                # El proyecto no está en el mapa local verificado (Desincronizado)
+                can_work = False
+                blocked_reason = "Proyecto Desincronizado / Archivado"
                 
             tarjeta = TaskCard(
                 parent=self.cards_container,

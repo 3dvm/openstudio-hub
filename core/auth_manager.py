@@ -7,22 +7,26 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.5.7
+# Versión del archivo: 0.6.0
 # =========================================================================================
 
 """
 Gestor de Autenticación y Contexto de Kitsu.
 Maneja las sesiones, tokens JWT, resolución de la matriz RBAC,
-extracción de metadatos de tareas y alimenta los paneles del UI.
+extracción de metadatos de tareas, y sincronización dinámica 
+de la identidad visual del estudio.
 """
 
+import os
 import json
 import gazu
+import requests
 from pathlib import Path
 from typing import Dict, Tuple, Optional, List
 
 OPENSTUDIO_CONFIG_DIR = Path.home() / ".openstudio"
 SESSION_FILE = OPENSTUDIO_CONFIG_DIR / "session.json"
+CACHE_DIR = OPENSTUDIO_CONFIG_DIR / "cache"
 
 class AuthManager:
     def __init__(self):
@@ -32,6 +36,9 @@ class AuthManager:
         
         if not OPENSTUDIO_CONFIG_DIR.exists():
             OPENSTUDIO_CONFIG_DIR.mkdir(parents=True)
+            
+        if not CACHE_DIR.exists():
+            CACHE_DIR.mkdir(parents=True)
 
     def set_host(self, host_url: str) -> None:
         if not host_url.endswith("/api"):
@@ -86,6 +93,80 @@ class AuthManager:
         self.access_token = ""
         if SESSION_FILE.exists():
             SESSION_FILE.unlink()
+
+    # ---------------------------------------------------------
+    # IDENTIDAD B2B Y SINCRONIZACIÓN
+    # ---------------------------------------------------------
+
+    def fetch_studio_identity(self) -> dict:
+        """
+        Descarga dinámicamente la configuración global del estudio 
+        y el avatar del usuario conectado (Issue 5).
+        """
+        identity = {
+            "studio_name": "OPENSTUDIO",
+            "avatar_path": None
+        }
+
+        if not self.user_data or not self.access_token:
+            return identity
+
+        # 1. Recuperar el nombre del estudio desde Gazu
+        try:
+            studio_profile = gazu.client.get("settings")
+            # Gazu Settings a veces devuelve un array o un dict
+            if isinstance(studio_profile, list) and len(studio_profile) > 0:
+                name = studio_profile[0].get("name")
+                if name: identity["studio_name"] = name
+            elif isinstance(studio_profile, dict):
+                name = studio_profile.get("name")
+                if name: identity["studio_name"] = name
+        except Exception as e:
+            print(f"[AuthManager] Info: No se pudo obtener el nombre del estudio ({e})")
+
+        # 2. Descargar Avatar del Usuario
+        avatar_id = self.user_data.get("avatar_id")
+        if avatar_id:
+            try:
+                # Armamos la ruta física usando la URL base y el endpoint de Gazu
+                base_url = self.kitsu_host.replace("/api", "")
+                avatar_url = f"{base_url}/api/pictures/thumbnails/persons/{avatar_id}.png"
+                
+                headers = {"Authorization": f"Bearer {self.access_token}"}
+                response = requests.get(avatar_url, headers=headers, stream=True, timeout=5)
+                
+                if response.status_code == 200:
+                    local_avatar = CACHE_DIR / f"{avatar_id}.png"
+                    with open(local_avatar, "wb") as f:
+                        for chunk in response.iter_content(1024):
+                            f.write(chunk)
+                    identity["avatar_path"] = str(local_avatar)
+            except Exception as e:
+                print(f"[AuthManager] Info: No se pudo descargar el avatar ({e})")
+
+        return identity
+
+    def obtener_proyectos_activos(self) -> Dict[str, str]:
+        """
+        Consulta la API de Gazu para obtener el SSoT de proyectos (Issue 6).
+        Retorna un diccionario { "nombre_proyecto_lower": "uuid_proyecto" }
+        """
+        mapeo = {}
+        try:
+            proyectos = gazu.project.all_open_projects()
+            for p in proyectos:
+                nombre = p.get("name", "").lower()
+                uuid = p.get("id", "")
+                if nombre and uuid:
+                    mapeo[nombre] = uuid
+        except Exception as e:
+            print(f"[AuthManager] Error al consultar proyectos activos: {e}")
+        
+        return mapeo
+
+    # ---------------------------------------------------------
+    # MATRIZ RBAC
+    # ---------------------------------------------------------
 
     def get_user_role(self) -> str:
         if not self.user_data:
@@ -156,7 +237,7 @@ class AuthManager:
                 task_type_name = task.get("task_type_name", "Unknown Task")
                 task_type_id = task.get("task_type_id", "")
                 
-                # Extracción extra para v0.5.7: Short name del Task Type (Ej. 'anim' en vez de 'Animation')
+                # Extracción extra para v0.5.7: Short name del Task Type
                 task_type_short_name = ""
                 try:
                     task_type_obj = gazu.task.get_task_type(task_type_id)
