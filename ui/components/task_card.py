@@ -27,7 +27,8 @@ from pathlib import Path
 
 class TaskCard(ctk.CTkFrame):
     def __init__(self, parent, task_data: dict, project_root: Path, is_installed: bool, 
-                 auth_manager, on_launch_callback, on_install_callback, **kwargs):
+                 auth_manager, on_launch_callback, on_install_callback, 
+                 can_work: bool = True, blocked_reason: str = "", **kwargs):
         
         # Color base de la tarjeta y bordes redondeados
         super().__init__(parent, fg_color="#242424", corner_radius=12, **kwargs)
@@ -36,6 +37,10 @@ class TaskCard(ctk.CTkFrame):
         self.project_root = project_root
         self.is_installed = is_installed
         self.auth_manager = auth_manager
+        
+        # Parámetros de seguridad (Fail-Fast UI)
+        self.can_work = can_work
+        self.blocked_reason = blocked_reason
         
         # Callbacks inyectados desde el widget principal para manejar la lógica de negocio
         self.on_launch_callback = on_launch_callback
@@ -128,13 +133,22 @@ class TaskCard(ctk.CTkFrame):
                 fg_color="transparent", border_width=2, border_color="#EF4444", text_color="#EF4444", height=40
             )
         elif self.is_installed:
-            config_path = self.project_root / "06_conf_LOCAL" / "project_config.json"
-            btn = ctk.CTkButton(
-                btn_frame, text="Work on Task / Launch Blender", font=ctk.CTkFont(size=14, weight="bold"),
-                fg_color="transparent", border_width=2, border_color="#10B981", text_color="#10B981",
-                hover_color="#064E3B", height=40,
-                command=lambda: self.on_launch_callback(self.project_root, config_path, self.task_data)
-            )
+            if self.can_work:
+                config_path = self.project_root / "06_conf_LOCAL" / "project_config.json"
+                btn = ctk.CTkButton(
+                    btn_frame, text="Work on Task / Launch Blender", font=ctk.CTkFont(size=14, weight="bold"),
+                    fg_color="transparent", border_width=2, border_color="#10B981", text_color="#10B981",
+                    hover_color="#064E3B", height=40,
+                    command=lambda: self.on_launch_callback(self.project_root, config_path, self.task_data)
+                )
+            else:
+                # Botón bloqueado por seguridad (Fail-Fast UI)
+                msg = self.blocked_reason if self.blocked_reason else "Acceso Denegado"
+                btn = ctk.CTkButton(
+                    btn_frame, text=f"🔒 {msg}", font=ctk.CTkFont(size=14, weight="bold"),
+                    state="disabled", fg_color="transparent", border_width=2, 
+                    border_color="#475569", text_color="#94A3B8", height=40
+                )
         else:
             btn = ctk.CTkButton(
                 btn_frame, text="Install Project Locally", font=ctk.CTkFont(size=14, weight="bold"),

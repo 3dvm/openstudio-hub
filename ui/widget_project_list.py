@@ -7,27 +7,29 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.5.8
+# Versión del archivo: 0.5.9
 # =========================================================================================
 
 """
 Componente del panel del artista que sincroniza dinámicamente las tareas asignadas.
 Actúa como un Controlador MVC: Renderiza pestañas de filtrado (Tabs) por proyecto,
 instancia las tarjetas modulares (TaskCard) y orquesta el ciclo de vida de Blender.
+Se apoya en PathResolver para inyectar la navegación profunda (Deep Linking).
 """
 
 import json
 import threading
+import time
 import customtkinter as ctk
 from pathlib import Path
 
 from core.env_launcher import lanzar_blender
 from core.local_installer import LocalInstaller
 from core.vcs_router import VCSRouter
+from core.path_resolver import PathResolver
 from ui.window_svn_login import SVNLoginWindow
 from ui.components.task_card import TaskCard
 
-# Cambiamos la herencia a CTkFrame para anclar las pestañas en la parte superior
 class ProjectListWidget(ctk.CTkFrame):
     def __init__(self, parent, nextcloud_dir: Path, auth_manager, vault_manager, config_factory, status_callback, **kwargs):
         super().__init__(parent, fg_color="transparent", **kwargs)
@@ -45,17 +47,29 @@ class ProjectListWidget(ctk.CTkFrame):
         self.all_tasks = []
         self.local_projects_map = {}
         self.current_filter = "All"
+        self._last_refresh_time = 0
         
         # === ESTRUCTURA UI ===
-        # 1. Contenedor de Pestañas (Horizontal)
+        # 1. Contenedor Superior (Cabecera y Botón Refresh)
+        self.header_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.header_frame.pack(fill="x", padx=15, pady=(5, 5))
+        
+        self.header_label = ctk.CTkLabel(
+            self.header_frame, text="Your Tasks", font=ctk.CTkFont(size=20, weight="bold"), text_color="#E2E8F0"
+        )
+        self.header_label.pack(side="left")
+        
+        self.refresh_btn = ctk.CTkButton(
+            self.header_frame, text="↻ Recargar", width=100, height=28,
+            fg_color="#1E293B", hover_color="#334155",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=self._forzar_recarga
+        )
+        self.refresh_btn.pack(side="right")
+        
+        # 2. Contenedor de Pestañas (Horizontal)
         self.tabs_container = ctk.CTkScrollableFrame(self, orientation="horizontal", height=55, fg_color="transparent")
         self.tabs_container.pack(fill="x", padx=10, pady=(0, 5))
-        
-        # 2. Etiqueta de cabecera
-        self.header_label = ctk.CTkLabel(
-            self, text="Your Tasks", font=ctk.CTkFont(size=20, weight="bold"), text_color="#E2E8F0"
-        )
-        self.header_label.pack(anchor="w", padx=15, pady=(5, 10))
         
         # 3. Contenedor de Tarjetas (Vertical Scrolleable)
         self.cards_container = ctk.CTkScrollableFrame(self, fg_color="transparent")
@@ -66,6 +80,17 @@ class ProjectListWidget(ctk.CTkFrame):
     # ---------------------------------------------------------
     # FLUJO DE CARGA DE DATOS (ASÍNCRONO)
     # ---------------------------------------------------------
+
+    def _forzar_recarga(self):
+        """Bloquea spam a la API y detona recarga."""
+        now = time.time()
+        if now - self._last_refresh_time < 3:
+            self.status_callback("Espera unos segundos antes de volver a recargar...", "yellow")
+            return
+            
+        self._last_refresh_time = now
+        self.status_callback("Sincronización manual forzada.", "white")
+        self.cargar_proyectos()
 
     def cargar_proyectos(self):
         """Inicia el proceso de carga en un hilo secundario para no congelar la UI."""
@@ -109,7 +134,6 @@ class ProjectListWidget(ctk.CTkFrame):
         self.all_tasks = tasks
         self.local_projects_map = local_projects_map
         
-        # Validar si el filtro actual sigue existiendo (por si se cerró un proyecto en Kitsu)
         active_projects = {t.get("project_name", "Unknown Project") for t in tasks}
         if self.current_filter != "All" and self.current_filter not in active_projects:
             self.current_filter = "All"
@@ -122,35 +146,33 @@ class ProjectListWidget(ctk.CTkFrame):
     # ---------------------------------------------------------
 
     def _render_tabs(self):
-        """Construye los botones de filtrado (píldoras) en la parte superior."""
         for widget in self.tabs_container.winfo_children():
             widget.destroy()
 
         if not self.all_tasks:
-            # Ocultar contenedor de tabs si no hay tareas
             self.tabs_container.pack_forget() 
             return
         else:
-            # Asegurar que esté visible
-            self.tabs_container.pack(fill="x", padx=10, pady=(0, 5), before=self.header_label)
+            # FIX TclError: Repackaging components sequentially to maintain proper hierarchy
+            self.tabs_container.pack_forget()
+            self.cards_container.pack_forget()
+            
+            self.tabs_container.pack(fill="x", padx=10, pady=(0, 5))
+            self.cards_container.pack(fill="both", expand=True)
 
-        # Contar tareas por proyecto
         project_counts = {}
         for t in self.all_tasks:
             p_name = t.get("project_name", "Unknown Project")
             project_counts[p_name] = project_counts.get(p_name, 0) + 1
 
-        # Tab "All Projects"
         self._crear_tab_btn("All", len(self.all_tasks))
 
-        # Tabs individuales por proyecto
         for p_name, count in project_counts.items():
             self._crear_tab_btn(p_name, count)
 
     def _crear_tab_btn(self, name: str, count: int):
         is_active = (self.current_filter == name)
 
-        # Estilo AAA: Verde resaltado si está activo, Gris oscuro si está inactivo
         fg_color = "#064E3B" if is_active else "#1E293B"
         border_color = "#10B981" if is_active else "#334155"
         text_color = "#10B981" if is_active else "#94A3B8"
@@ -168,17 +190,15 @@ class ProjectListWidget(ctk.CTkFrame):
         btn.pack(side="left", padx=5)
 
     def _seleccionar_tab(self, name: str):
-        """Callback al hacer clic en una pestaña."""
         self.current_filter = name
-        self._render_tabs()   # Redibujar para actualizar colores (Glow)
-        self._render_tasks()  # Redibujar tarjetas filtradas
+        self._render_tabs()   
+        self._render_tasks()  
 
     # ---------------------------------------------------------
     # RENDERIZADO DE TARJETAS (CARDS)
     # ---------------------------------------------------------
 
     def _render_tasks(self):
-        """Filtra y dibuja las tarjetas correspondientes."""
         for widget in self.cards_container.winfo_children():
             widget.destroy()
 
@@ -191,19 +211,44 @@ class ProjectListWidget(ctk.CTkFrame):
             self.status_callback("Sincronización completada. Tablero limpio.", "white")
             return
 
-        # Aplicar el filtro seleccionado
         filtered_tasks = [
             t for t in self.all_tasks 
             if self.current_filter == "All" or t.get("project_name") == self.current_filter
         ]
+
+        resolver = PathResolver()
+        user_role = self.auth_manager.get_user_role()
+        is_admin = user_role in ["lead", "supervisor", "td", "manager"]
+        prod_folder = self.config_factory.get_production_folder_name()
 
         for task in filtered_tasks:
             proyecto_nombre = task["project_name"]
             project_root = self.local_projects_map.get(proyecto_nombre.lower())
             
             esta_instalado = False
+            can_work = True
+            blocked_reason = ""
+
+            # Validar existencia de archivo (Fail-Fast Pre-Flight Check)
             if project_root:
                 esta_instalado = self.installer.verificar_instalacion(project_root)
+                if esta_instalado:
+                    try:
+                        relative_target = resolver.resolve(task)
+                        if relative_target:
+                            target_file = project_root / prod_folder / "pro" / relative_target
+                            
+                            # LOGS DE OBSERVABILIDAD INYECTADOS
+                            print(f"[OPENSTUDIO DEBUG] Evaluando Tarea: {task.get('entity_name', 'Unknown')}")
+                            print(f"[OPENSTUDIO DEBUG] Path esperado: {target_file}")
+                            print(f"[OPENSTUDIO DEBUG] ¿Existe en disco?: {target_file.exists()}")
+                            
+                            if not target_file.exists() and not is_admin:
+                                can_work = False
+                                blocked_reason = "Falta archivo (Requiere Setup)"
+                    except Exception as e:
+                        print(f"[OPENSTUDIO DEBUG] Error interno del PathResolver: {e}")
+                        pass
                 
             tarjeta = TaskCard(
                 parent=self.cards_container,
@@ -212,7 +257,9 @@ class ProjectListWidget(ctk.CTkFrame):
                 is_installed=esta_instalado,
                 auth_manager=self.auth_manager,
                 on_launch_callback=self.iniciar_proyecto_hilo,
-                on_install_callback=self.ejecutar_instalacion_hilo
+                on_install_callback=self.ejecutar_instalacion_hilo,
+                can_work=can_work,
+                blocked_reason=blocked_reason
             )
             tarjeta.pack(pady=10, padx=15, fill="x")
             
@@ -233,29 +280,46 @@ class ProjectListWidget(ctk.CTkFrame):
             )
             return
 
+        user_role = self.auth_manager.get_user_role()
+        prod_folder = self.config_factory.get_production_folder_name()
+        target_file = None
+        
+        # Validación redundante para seguridad
+        try:
+            resolver = PathResolver()
+            relative_target = resolver.resolve(task_data)
+            if relative_target:
+                target_file = project_root / prod_folder / "pro" / relative_target
+                if user_role not in ["lead", "supervisor", "td", "manager"]:
+                    if not target_file.exists():
+                        self.status_callback("❌ Archivo no encontrado. Solicite al Lead la creación de la toma.", "red")
+                        return
+        except Exception as e:
+            self.status_callback(f"Error interno resolviendo la ruta: {e}", "red")
+            return
+
         svn_user, svn_pwd = self.vault.get_svn_credentials()
         kitsu_user, kitsu_pwd = self.vault.get_kitsu_credentials()
         kitsu_host = self.auth_manager.kitsu_host
-        user_role = self.auth_manager.get_user_role()
-
-        task_type = task_data.get("task_type_name", "unknown")
 
         threading.Thread(
             target=self._hilo_ejecucion_blender, 
-            args=(project_root, config_path, svn_user, svn_pwd, kitsu_user, kitsu_pwd, kitsu_host, user_role, task_type), 
+            args=(project_root, config_path, svn_user, svn_pwd, kitsu_user, kitsu_pwd, kitsu_host, user_role, task_data, target_file, prod_folder), 
             daemon=True
         ).start()
 
-    def _hilo_ejecucion_blender(self, project_root, config_path, svn_user, svn_pwd, kitsu_user, kitsu_pwd, kitsu_host, user_role, task_type):
+    def _hilo_ejecucion_blender(self, project_root, config_path, svn_user, svn_pwd, kitsu_user, kitsu_pwd, kitsu_host, user_role, task_data, target_file, prod_folder):
+        task_type = task_data.get("task_type_name", "unknown")
         adapter = None
         ruta_bloqueo = "edit/master_edit.blend"
         
+        # 2. SVN Cleanup
         try:
             self.status_callback("Saneando repositorio local...", "yellow")
             vcs_type = self.config_factory.get_vcs_adapter_type()
             base_url = self.config_factory.get_vcs_repository_url()
-            repo_url = f"{base_url}/{project_root.name}/02_archivos_de_produccion"
-            workspace = project_root / "02_archivos_de_produccion"
+            repo_url = f"{base_url}/{project_root.name}/{prod_folder}"
+            workspace = project_root / prod_folder
             
             router = VCSRouter(vcs_type=vcs_type, repo_url=repo_url, workspace_dir=workspace)
             adapter = router.get_adapter()
@@ -263,6 +327,7 @@ class ProjectListWidget(ctk.CTkFrame):
         except Exception as e:
             print(f"[CLEANUP WARNING] No se pudo ejecutar el saneamiento automático: {e}")
 
+        # 3. Lock Management
         requiere_bloqueo = task_type.lower() in ["edit", "editorial", "montaje"]
         cargo_usuario = self.auth_manager.get_user_position()
         
@@ -290,18 +355,25 @@ class ProjectListWidget(ctk.CTkFrame):
         else:
             self.status_callback("Iniciando entorno aislado...", "yellow")
 
+        # 4. Orquestación del GUI e Invocación a env_launcher
         app_root = self.winfo_toplevel()
         if hasattr(app_root, "registrar_instancia"):
             app_root.registrar_instancia(activa=True)
 
         try:
-            lanzar_blender(project_root, config_path, svn_user, svn_pwd, kitsu_user, kitsu_pwd, kitsu_host, user_role, task_type, self.status_callback)
+            lanzar_blender(
+                project_root, config_path, svn_user, svn_pwd, 
+                kitsu_user, kitsu_pwd, kitsu_host, user_role, 
+                task_data, target_file, self.status_callback, 
+                production_folder=prod_folder
+            )
         except Exception as e:
             self.status_callback(f"Error crítico al ejecutar Blender: {str(e)}", "red")
         finally:
             if hasattr(app_root, "registrar_instancia"):
                 app_root.registrar_instancia(activa=False)
 
+        # 5. Lock Release
         if adapter and requiere_bloqueo and esta_autorizado:
             self.status_callback("Liberando testigo de edición (SVN Unlock)...", "yellow")
             try:

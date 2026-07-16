@@ -1,3 +1,15 @@
+# =========================================================================================
+# OPENSTUDIOHUB
+# Módulo: core/config_factory.py
+# Rol Arquitectónico: Configuration Manager / Factory
+# =========================================================================================
+# Copyright (c) 2026 Ernesto Del Valle Macuare. Todos los derechos reservados.
+# Licencia: GNU General Public License v3.0 (GPLv3)
+#
+# Autor: Ernesto Del Valle Macuare
+# Versión del archivo: 0.5.9
+# =========================================================================================
+
 import json
 import platform
 from pathlib import Path
@@ -53,6 +65,10 @@ class ConfigFactory:
     def is_vendor_sparse_enabled(self) -> bool:
         """Determina si la protección Jailing/Sparse está activada en la red."""
         return self._config.get("vcs_engine", {}).get("enable_vendor_sparse_checkout", True)
+
+    def get_production_folder_name(self) -> str:
+        """Devuelve el nombre del directorio principal de producción (Dynamic Routing)."""
+        return self._config.get("vcs_engine", {}).get("production_folder_name", "02_archivos_de_produccion")
 
     def get_kitsu_api_url(self) -> str:
         return self._config.get("kitsu_production", {}).get("api_url", "")

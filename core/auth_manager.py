@@ -7,7 +7,7 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.5.11
+# Versión del archivo: 0.5.7
 # =========================================================================================
 
 """
@@ -154,6 +154,16 @@ class AuthManager:
                 project_name = task.get("project_name", "Unknown Project")
                 entity_name = task.get("entity_name", "Unknown Entity")
                 task_type_name = task.get("task_type_name", "Unknown Task")
+                task_type_id = task.get("task_type_id", "")
+                
+                # Extracción extra para v0.5.7: Short name del Task Type (Ej. 'anim' en vez de 'Animation')
+                task_type_short_name = ""
+                try:
+                    task_type_obj = gazu.task.get_task_type(task_type_id)
+                    if task_type_obj:
+                        task_type_short_name = task_type_obj.get("short_name", "")
+                except Exception:
+                    pass
                 
                 status_color = "#444444"
                 status_name = "TODO"
@@ -166,10 +176,31 @@ class AuthManager:
                     pass
                     
                 preview_id = None
+                entity_type = ""
+                sequence_id = ""
+                sequence_name = ""
+                asset_type_id = ""
+                asset_type_name = ""
+                
                 try:
                     entity_obj = gazu.entity.get_entity(task.get("entity_id"))
                     if entity_obj:
                         preview_id = entity_obj.get("preview_file_id")
+                        entity_type = entity_obj.get("type", "")
+                        
+                        # Resolución relacional profunda (Issue 2 de la v0.5.7)
+                        if entity_type.lower() == "shot":
+                            sequence_id = entity_obj.get("parent_id", "")
+                            if sequence_id:
+                                seq_obj = gazu.shot.get_sequence(sequence_id)
+                                if seq_obj:
+                                    sequence_name = seq_obj.get("name", "")
+                        elif entity_type.lower() == "asset":
+                            asset_type_id = entity_obj.get("entity_type_id", "")
+                            if asset_type_id:
+                                type_obj = gazu.asset.get_asset_type(asset_type_id)
+                                if type_obj:
+                                    asset_type_name = type_obj.get("name", "")
                 except Exception:
                     pass
 
@@ -185,7 +216,14 @@ class AuthManager:
                     "project_name": project_name,
                     "entity_id": task.get("entity_id", ""),
                     "entity_name": entity_name,
+                    "entity_type": entity_type,
+                    "task_type_id": task_type_id,
                     "task_type_name": task_type_name,
+                    "task_type_short_name": task_type_short_name,
+                    "sequence_id": sequence_id,
+                    "sequence_name": sequence_name,
+                    "asset_type_id": asset_type_id,
+                    "asset_type_name": asset_type_name,
                     "status_name": status_name,
                     "status_color": status_color,
                     "preview_file_id": preview_id,
