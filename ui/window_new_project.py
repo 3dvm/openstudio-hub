@@ -1,148 +1,257 @@
 # =========================================================================================
 # OPENSTUDIOHUB
 # Módulo: ui/window_new_project.py
-# Rol Arquitectónico: UI View / Modal Dialog
+# Rol Arquitectónico: UI View / Modal Dialog (PySide6)
 # =========================================================================================
 # Copyright (c) 2026 Ernesto Del Valle Macuare. Todos los derechos reservados.
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.6.0
+# Versión del archivo: 0.6.1
 # =========================================================================================
 
+"""
+Asistente modal para la creación de nuevos proyectos (TD Wizard).
+Migrado a PySide6. Actúa como un QDialog modal, lee el manifiesto maestro B2B 
+para renderizar opciones de dependencias, resuelve prerrequisitos lógicos (Auto-Check)
+y delega la carga masiva al ProjectBuilder mediante un QThread. Incorpora Auto-Sembrado.
+"""
+
 import json
-import customtkinter as ctk
-from customtkinter import filedialog
 from pathlib import Path
+
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
+                               QLineEdit, QComboBox, QCheckBox, QPushButton, 
+                               QScrollArea, QWidget, QFileDialog)
+from PySide6.QtCore import Qt, QThread, Signal
+
 from core.project_builder import ProjectBuilder
 
-class NewProjectWindow(ctk.CTkToplevel):
-    def __init__(self, parent, nextcloud_dir, on_success_callback):
+
+class ProjectCreationWorker(QThread):
+    """Hilo trabajador para ejecutar la I/O pesada del ProjectBuilder sin congelar la modal."""
+    result = Signal(bool, str)
+
+    def __init__(self, builder: ProjectBuilder, nombre: str, version: str, 
+                 dependencias: dict, template: str, splash: str):
+        super().__init__()
+        self.builder = builder
+        self.nombre = nombre
+        self.version = version
+        self.dependencias = dependencias
+        self.template = template
+        self.splash = splash
+
+    def run(self):
+        exito, mensaje = self.builder.create_project(
+            project_name=self.nombre, 
+            blender_version=self.version, 
+            dependencies=self.dependencias, 
+            project_template=self.template, 
+            splash_image_path=self.splash
+        )
+        self.result.emit(exito, mensaje)
+
+
+class NewProjectWindow(QDialog):
+    def __init__(self, parent: QWidget, nextcloud_dir: Path, config_factory, on_success_callback):
         super().__init__(parent)
-        self.title("Nuevo Proyecto")
-        self.geometry("500x750")
+        
+        self.setWindowTitle("Nuevo Proyecto")
+        self.setFixedSize(500, 750)
+        self.setModal(True)
 
         self.ruta_splash = ""
-        self.resizable(False, False)
-        
-        self.transient(parent)
-        self.grab_set()
-
-        self.builder = ProjectBuilder(nextcloud_dir)
+        self.config_factory = config_factory
         self.on_success = on_success_callback
         
-        # Rutas dinámicas de la bóveda
-        self.vault_manifest_path = nextcloud_dir.parent / "04_BIBLIOTECA_ASSETS" / "00_SOFTWARE" / "vault_manifest.json"
+        # Inyectar dependencias actualizadas al motor de construcción
+        self.builder = ProjectBuilder(nextcloud_dir, self.config_factory)
+        
+        # Rutas dinámicas de la bóveda (Alineado con ConfigFactory)
+        try:
+            self.vault_root = self.config_factory.get_workspace_root() / "04_BIBLIOTECA_ASSETS"
+        except Exception:
+            self.vault_root = nextcloud_dir.parent / "04_BIBLIOTECA_ASSETS"
+            
+        self.vault_manifest_path = self.vault_root / "00_SOFTWARE" / "vault_manifest.json"
         
         self.vault_data = self._cargar_vault_manifest()
-        self.checkboxes_herramientas = {}  # {categoria: {nombre: CTkCheckBox}}
-        self.vars_herramientas = {}        # {categoria: {nombre: StringVar}}
+        self.checkboxes_herramientas = {}  # {categoria: {nombre: {'checkbox': QCheckBox, 'version': str}}}
 
-        # --- DISEÑO DE LA INTERFAZ ---
-        lbl_titulo = ctk.CTkLabel(self, text="Configuración Inicial", font=ctk.CTkFont(size=18, weight="bold"))
-        lbl_titulo.pack(pady=(20, 10))
+        self.setObjectName("ViewLoginBase")
+        self._build_ui()
+
+    def _build_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(40, 30, 40, 30)
+        main_layout.setSpacing(15)
+
+        lbl_titulo = QLabel("Configuración Inicial")
+        lbl_titulo.setObjectName("CardTitle")
+        lbl_titulo.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(lbl_titulo)
+        
+        main_layout.addSpacing(10)
 
         # 1. Nombre
-        self.entry_nombre = ctk.CTkEntry(self, placeholder_text="Nombre (ej. p0004-nuevo-proyecto)", width=400)
-        self.entry_nombre.pack(pady=10)
+        self.entry_nombre = QLineEdit()
+        self.entry_nombre.setObjectName("FormInput")
+        self.entry_nombre.setPlaceholderText("Nombre (ej. p0004-nuevo-proyecto)")
+        self.entry_nombre.setFixedHeight(45)
+        main_layout.addWidget(self.entry_nombre)
 
         # 2. Selector de Versión de Blender
-        lbl_version = ctk.CTkLabel(self, text="Versión de Blender Objetivo:")
-        lbl_version.pack(pady=(10, 0))
+        lbl_version = QLabel("Versión de Blender Objetivo:")
+        lbl_version.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        main_layout.addWidget(lbl_version)
         
         versiones = list(self.vault_data.keys()) if self.vault_data else ["5.1.2"]
-        self.combo_version = ctk.CTkComboBox(
-            self, 
-            values=versiones, 
-            width=400,
-            command=self.dibujar_dependencias_dinamicas
-        )
-        self.combo_version.pack(pady=5)
+        self.combo_version = QComboBox()
+        self.combo_version.addItems(versiones)
+        self.combo_version.setFixedHeight(40)
+        self.combo_version.setStyleSheet("QComboBox { background-color: #0F172A; border: 1px solid #475569; border-radius: 8px; color: #F8FAFC; padding: 5px; }")
+        self.combo_version.currentTextChanged.connect(self.dibujar_dependencias_dinamicas)
+        main_layout.addWidget(self.combo_version)
 
         # 3. Componentes y Dependencias (Categorizado)
-        lbl_addons = ctk.CTkLabel(self, text="Componentes de Bóveda (vault_manifest.json):", font=ctk.CTkFont(weight="bold"))
-        lbl_addons.pack(pady=(15, 5), padx=50, anchor="w")
+        lbl_addons = QLabel("Componentes de Bóveda (vault_manifest.json):")
+        lbl_addons.setStyleSheet("font-weight: bold; margin-top: 15px;")
+        main_layout.addWidget(lbl_addons)
         
-        self.frame_addons = ctk.CTkScrollableFrame(self, width=380, height=250)
-        self.frame_addons.pack(pady=0, padx=50, fill="x")
+        self.scroll_addons = QScrollArea()
+        self.scroll_addons.setWidgetResizable(True)
+        self.scroll_addons.setStyleSheet("QScrollArea { border: 1px solid #334155; border-radius: 8px; background-color: #1E293B; }")
+        
+        self.addons_widget = QWidget()
+        self.addons_widget.setStyleSheet("background: transparent;")
+        self.addons_layout = QVBoxLayout(self.addons_widget)
+        self.addons_layout.setAlignment(Qt.AlignTop)
+        
+        self.scroll_addons.setWidget(self.addons_widget)
+        main_layout.addWidget(self.scroll_addons, stretch=1)
 
         if versiones:
-            self.dibujar_dependencias_dinamicas(self.combo_version.get())
+            self.dibujar_dependencias_dinamicas(self.combo_version.currentText())
 
         # 4. Splash Screen
-        lbl_splash = ctk.CTkLabel(self, text="Splash Screen Personalizado (1000x500px):")
-        lbl_splash.pack( pady=(15,0) )
+        lbl_splash = QLabel("Splash Screen Personalizado (1000x500px):")
+        lbl_splash.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        main_layout.addWidget(lbl_splash)
 
-        frame_splash = ctk.CTkFrame(self, fg_color="transparent")
-        frame_splash.pack(pady=5, fill="x", padx=50)
+        splash_layout = QHBoxLayout()
+        splash_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.btn_splash = ctk.CTkButton(
-                frame_splash,
-                text="Buscar PNG",
-                command=self.seleccionar_splash,
-                width=120,
-                fg_color="#4F46E5",
-                hover_color="#4338CA"
-        )
-        self.btn_splash.pack( side="left", padx=(0,10) )
+        self.btn_splash = QPushButton("Buscar PNG")
+        self.btn_splash.setObjectName("SecondaryButton")
+        self.btn_splash.setFixedSize(120, 35)
+        self.btn_splash.setCursor(Qt.PointingHandCursor)
+        self.btn_splash.setStyleSheet("background-color: #4F46E5; color: white; border-radius: 6px; font-weight: bold;")
+        self.btn_splash.clicked.connect(self.seleccionar_splash)
+        splash_layout.addWidget(self.btn_splash)
 
-        self.lbl_splash_name = ctk.CTkLabel(frame_splash, text="Ninguna imagen", text_color="gray")
-        self.lbl_splash_name.pack(side="left", fill="x", expand=True)
+        self.lbl_splash_name = QLabel("Ninguna imagen")
+        self.lbl_splash_name.setStyleSheet("color: #64748B; padding-left: 10px;")
+        splash_layout.addWidget(self.lbl_splash_name, stretch=1)
 
-        # Feedback y Botón
-        self.lbl_status = ctk.CTkLabel(self, text="", text_color="red")
-        self.lbl_status.pack(pady=10)
+        main_layout.addLayout(splash_layout)
 
-        self.btn_crear = ctk.CTkButton(self, text="Generar Proyecto", command=self.ejecutar_creacion)
-        self.btn_crear.pack(pady=10)
+        # Feedback y Botón de Acción
+        self.lbl_status = QLabel("")
+        self.lbl_status.setAlignment(Qt.AlignCenter)
+        self.lbl_status.hide()
+        main_layout.addWidget(self.lbl_status)
+
+        self.btn_crear = QPushButton("Generar Proyecto")
+        self.btn_crear.setObjectName("PrimaryButton")
+        self.btn_crear.setFixedHeight(50)
+        self.btn_crear.setCursor(Qt.PointingHandCursor)
+        self.btn_crear.clicked.connect(self.ejecutar_creacion)
+        main_layout.addWidget(self.btn_crear)
 
     def seleccionar_splash(self):
-        ruta = filedialog.askopenfilename(
-            title="Seleccionar Splash Screen del Proyecto",
-            filetypes=[("Imágenes PNG", "*.png")]
+        ruta, _ = QFileDialog.getOpenFileName(
+            self, "Seleccionar Splash Screen del Proyecto", "", "Imágenes PNG (*.png)"
         )
         if ruta:
             self.ruta_splash = ruta
             nombre_archivo = Path(ruta).name
-            self.lbl_splash_name.configure(text=nombre_archivo, text_color="white")
+            self.lbl_splash_name.setText(nombre_archivo)
+            self.lbl_splash_name.setStyleSheet("color: #F8FAFC; padding-left: 10px;")
 
     def _cargar_vault_manifest(self) -> dict:
-        """Lee el manifiesto maestro de la bóveda para extraer las categorías y requisitos."""
+        """
+        Lee el manifiesto maestro B2B. Implementa Auto-Sembrado (Auto-Seeding)
+        para aprovisionar estudios nuevos mitigando bloqueos estructurales.
+        """
         data = {}
+        
+        # Auto-Sembrado si la bóveda no ha sido inicializada
+        if not self.vault_manifest_path.exists():
+            print(f"[WIZARD INFO] Inicializando bóveda por primera vez en: {self.vault_manifest_path}")
+            self.vault_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            esqueleto_base = {
+                "v5.1.2": {
+                    "blender_version": "5.1.2",
+                    "categories": {
+                        "templates": {
+                            "Macuare_Estudio_Base": {
+                                "version": "1.0",
+                                "description": "Plantilla oficial generada automáticamente",
+                                "mandatory": True,
+                                "requires": []
+                            }
+                        },
+                        "addons": {}
+                    }
+                }
+            }
+            try:
+                with open(self.vault_manifest_path, 'w', encoding='utf-8') as f:
+                    json.dump(esqueleto_base, f, indent=4)
+            except Exception as e:
+                print(f"[WIZARD ERROR] Fallo en el auto-sembrado: {e}")
+
+        # Lectura regular
         if self.vault_manifest_path.exists():
             try:
                 with open(self.vault_manifest_path, 'r', encoding='utf-8') as f:
                     manifesto_crudo = json.load(f)
-                    # Convertimos a un diccionario {version_blender: categories}
                     for _, bl_version_data in manifesto_crudo.items():
                         version = bl_version_data.get("blender_version")
                         if version:
                             data[version] = bl_version_data.get("categories", {})
             except Exception as e:
                 print(f"[UI ERROR] Fallo al parsear vault_manifest: {e}")
+                
         return data
 
-    def dibujar_dependencias_dinamicas(self, version_seleccionada):
+    def _clear_addons_layout(self):
+        while self.addons_layout.count():
+            child = self.addons_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+    def dibujar_dependencias_dinamicas(self, version_seleccionada: str):
         """Renderiza las categorías y herramientas leyendo el manifesto de la bóveda."""
-        for widget in self.frame_addons.winfo_children():
-            widget.destroy()
-        
+        self._clear_addons_layout()
         self.checkboxes_herramientas.clear()
-        self.vars_herramientas.clear()
 
         categorias_disponibles = self.vault_data.get(version_seleccionada, {})
 
         if not categorias_disponibles:
-            ctk.CTkLabel(self.frame_addons, text="No hay componentes definidos para esta versión.", text_color="gray").pack(pady=20)
+            lbl_empty = QLabel("No hay componentes definidos para esta versión.")
+            lbl_empty.setStyleSheet("color: #64748B; padding: 20px;")
+            self.addons_layout.addWidget(lbl_empty)
             return
 
         for categoria, items in categorias_disponibles.items():
-            # Título de Categoría
-            lbl_cat = ctk.CTkLabel(self.frame_addons, text=f"[{categoria.upper()}]", text_color="#10B981", font=ctk.CTkFont(weight="bold"))
-            lbl_cat.pack(pady=(10, 2), anchor="w")
+            lbl_cat = QLabel(f"[{categoria.upper()}]")
+            lbl_cat.setStyleSheet("color: #10B981; font-weight: bold; margin-top: 10px;")
+            self.addons_layout.addWidget(lbl_cat)
             
             self.checkboxes_herramientas[categoria] = {}
-            self.vars_herramientas[categoria] = {}
 
             for nombre_item, datos in items.items():
                 version_item = datos.get("version", "1.0")
@@ -150,101 +259,93 @@ class NewProjectWindow(ctk.CTkToplevel):
                 descripcion = datos.get("description", "")
                 requires = datos.get("requires", [])
 
-                # Variable que almacena la versión si está activo, vacío si no
-                var = ctk.StringVar(value=version_item if es_obligatorio else "")
                 texto_label = f"{nombre_item} v{version_item} - {descripcion}"
                 
-                cb = ctk.CTkCheckBox(
-                    self.frame_addons, 
-                    text=texto_label, 
-                    variable=var, 
-                    onvalue=version_item, 
-                    offvalue="",
-                    command=lambda n=nombre_item, c=categoria, r=requires, v=var: self._resolver_subdependencias(c, n, r, v)
-                )
-                cb.pack(pady=5, padx=(10, 0), anchor="w")
+                cb = QCheckBox(texto_label)
+                cb.setStyleSheet("QCheckBox { color: #F8FAFC; padding: 5px; } QCheckBox::indicator { width: 15px; height: 15px; }")
+                
+                cb.toggled.connect(lambda checked, c=categoria, n=nombre_item, r=requires: self._resolver_subdependencias(checked, c, n, r))
+                
+                self.addons_layout.addWidget(cb)
 
                 if es_obligatorio:
-                    cb.select()
-                    cb.configure(state="disabled")
+                    cb.setChecked(True)
+                    cb.setEnabled(False)
 
-                self.checkboxes_herramientas[categoria][nombre_item] = cb
-                self.vars_herramientas[categoria][nombre_item] = var
+                self.checkboxes_herramientas[categoria][nombre_item] = {
+                    'checkbox': cb,
+                    'version': version_item
+                }
 
-    def _resolver_subdependencias(self, categoria_padre: str, nombre_padre: str, requires: list, var_padre: ctk.StringVar):
+    def _resolver_subdependencias(self, checked: bool, categoria_padre: str, nombre_padre: str, requires: list):
         """Auto-selecciona y bloquea dependencias subordinadas si el padre es activado."""
-        if not var_padre.get():
-            # Si el usuario desmarcó el padre, no hacemos rollback automático para no ser destructivos,
-            # pero podríamos desbloquear las subordinadas si queremos. Por ahora solo evaluamos al activar.
-            return
+        if not checked:
+            return 
             
         for req in requires:
-            # req suele venir en formato "categoria/nombre_item"
             partes = req.split("/")
             if len(partes) != 2: continue
             
             cat_req, nom_req = partes[0], partes[1]
             
             if cat_req in self.checkboxes_herramientas and nom_req in self.checkboxes_herramientas[cat_req]:
-                cb_sub = self.checkboxes_herramientas[cat_req][nom_req]
-                var_sub = self.vars_herramientas[cat_req][nom_req]
+                sub_dict = self.checkboxes_herramientas[cat_req][nom_req]
+                cb_sub = sub_dict['checkbox']
                 
-                # Obtener la versión correcta del sub-item (el onvalue del checkbox)
-                version_sub = cb_sub.cget("onvalue")
-                
-                # Lo encendemos y lo bloqueamos
-                var_sub.set(version_sub)
-                cb_sub.select()
-                cb_sub.configure(state="disabled", text_color="#F59E0B")
-                
-                # Feedback visual
-                print(f"[HUB DEPENDENCY] Auto-seleccionado {nom_req} requerido por {nombre_padre}")
+                cb_sub.setChecked(True)
+                cb_sub.setEnabled(False)
+                cb_sub.setStyleSheet("QCheckBox { color: #F59E0B; padding: 5px; }")
 
     def ejecutar_creacion(self):
-        """Valida, aplana el diccionario de dependencias y delega a ProjectBuilder."""
-        nombre = self.entry_nombre.get().strip()
-        version_blender = self.combo_version.get().strip()
+        """Valida, aplana el diccionario de dependencias y delega a ProjectBuilder vía QThread."""
+        nombre = self.entry_nombre.text().strip()
+        version_blender = self.combo_version.currentText().strip()
 
-        # Validación básica de caracteres
         if not nombre:
-            self.lbl_status.configure(text="El nombre del proyecto es obligatorio.", text_color="red")
+            self.lbl_status.setText("El nombre del proyecto es obligatorio.")
+            self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold;")
+            self.lbl_status.show()
             return
+            
         if not nombre.replace("-", "").replace("_", "").isalnum():
-            self.lbl_status.configure(text="Solo caracteres alfanuméricos, guiones o guiones bajos.", text_color="red")
+            self.lbl_status.setText("Solo caracteres alfanuméricos, guiones o guiones bajos.")
+            self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold;")
+            self.lbl_status.show()
             return
 
-        # Construir el diccionario anidado de dependencias para project_init.json
         dependencias_finales = {}
-        template_principal = "Macuare_Estudio" # Fallback por si no eligen nada
+        template_principal = "Macuare_Estudio"
         
-        for categoria, items in self.vars_herramientas.items():
+        for categoria, items in self.checkboxes_herramientas.items():
             dependencias_finales[categoria] = {}
-            for nombre_item, var in items.items():
-                val = var.get()
-                if val:
-                    dependencias_finales[categoria][nombre_item] = val
-                    # Identificar qué plantilla seleccionó el TD
+            for nombre_item, data in items.items():
+                if data['checkbox'].isChecked():
+                    dependencias_finales[categoria][nombre_item] = data['version']
                     if categoria == "templates":
                         template_principal = nombre_item
 
-        self.btn_crear.configure(state="disabled", text="Creando...")
-        self.lbl_status.configure(text="Estructurando directorios y subiendo al servidor...", text_color="yellow")
-        self.update_idletasks() # Forzar refresco visual
+        self.btn_crear.setEnabled(False)
+        self.btn_crear.setText("Creando...")
+        self.lbl_status.setText("Estructurando directorios y subiendo al servidor...")
+        self.lbl_status.setStyleSheet("color: #F59E0B; font-weight: bold;")
+        self.lbl_status.show()
 
-        # Llamar al Builder
-        exito, mensaje = self.builder.create_project(
-            project_name=nombre, 
-            blender_version=version_blender, 
-            dependencies=dependencias_finales, 
-            project_template=template_principal, 
-            splash_image_path=self.ruta_splash
+        self.worker = ProjectCreationWorker(
+            self.builder, nombre, version_blender, dependencias_finales, 
+            template_principal, self.ruta_splash
         )
+        self.worker.result.connect(self._on_creation_finished)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.worker.start()
 
-        # Resolver Callbacks MVC (Issue 4)
+    def _on_creation_finished(self, exito: bool, mensaje: str):
         if exito:
-            self.lbl_status.configure(text=mensaje, text_color="green")
-            self.on_success() # Esto disparará cargar_proyectos() en la ViewTD
-            self.after(1500, self.destroy)
+            self.lbl_status.setText(mensaje)
+            self.lbl_status.setStyleSheet("color: #10B981; font-weight: bold;")
+            self.on_success() 
+            self.close()
         else:
-            self.btn_crear.configure(state="normal", text="Generar Proyecto")
-            self.lbl_status.configure(text=mensaje, text_color="red")
+            self.btn_crear.setEnabled(True)
+            self.btn_crear.setText("Generar Proyecto")
+            self.lbl_status.setText(mensaje)
+            self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold;")

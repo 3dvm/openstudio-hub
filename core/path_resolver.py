@@ -7,13 +7,13 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.5.7
+# Versión del archivo: 1.0.1
 # =========================================================================================
 
 """
 Traduce las entidades de la API de Kitsu (Tareas) a rutas físicas de disco local.
-Implementa las convenciones de nomenclatura del estudio según el SDD, tanto
-para directorios (Sparse Checkout) como para archivos finales (Deep Linking).
+Implementa las convenciones de nomenclatura del estudio según el SDD, adaptado
+estrictamente a payloads de datos que mapean el tipo bajo 'entity_type_name'.
 """
 
 from typing import Dict, Optional
@@ -34,7 +34,8 @@ class PathResolver:
         if not task_data:
             return None
             
-        entity_type = task_data.get("entity_type", "").lower()
+        # Kitsu mapping: Extraer tipo desde entity_type_name o fallback a entity_type
+        entity_type = task_data.get("entity_type_name", task_data.get("entity_type", "")).lower()
         entity_name = task_data.get("entity_name", "")
         
         if entity_type == "shot":
@@ -45,9 +46,10 @@ class PathResolver:
             return f"pro/shots/{seq_name}/{entity_name}"
             
         elif entity_type == "asset":
-            asset_type = task_data.get("asset_type_name", "")
-            if not asset_type or not entity_name:
-                raise ValueError("Metadatos incompletos para Asset: Falta asset_type_name.")
+            # Normalización Jailing para Assets: Si no hay categoría asignada cae en props
+            asset_type = task_data.get("asset_type_name", "props").lower()
+            if not entity_name:
+                raise ValueError("Metadatos incompletos para Asset: Falta entity_name.")
             
             return f"pro/assets/{asset_type}/{entity_name}"
             
@@ -64,12 +66,19 @@ class PathResolver:
         if not task_data:
             return None
             
-        entity_type = task_data.get("entity_type", "").lower()
+        # Corrección de Mapeo API: Captura 'entity_type_name' mapeado por Kitsu
+        entity_type = task_data.get("entity_type_name", task_data.get("entity_type", "")).lower()
         entity_name = task_data.get("entity_name", "")
         
-        # Priorizar el short_name para archivos (ej. 'anim' en lugar de 'Animation')
-        task_name = task_data.get("task_type_short_name", task_data.get("task_type_name", "")).lower()
+        # Priorizar short_name para archivos (ej. 'anim' o 'modelado')
+        task_name = task_data.get("task_type_short_name", task_data.get("task_type_name", "generic")).lower()
         
+        # Normalizar strings con acentos comunes en entornos en español (animación -> anim)
+        if "anim" in task_name:
+            task_name = "anim"
+        elif "model" in task_name:
+            task_name = "model"
+            
         if entity_type == "shot":
             seq_name = task_data.get("sequence_name", "")
             if not seq_name or not entity_name:
@@ -79,8 +88,8 @@ class PathResolver:
             return f"shots/{seq_name}/{entity_name}/{entity_name}-{task_name}.blend"
             
         elif entity_type == "asset":
-            asset_type = task_data.get("asset_type_name", "")
-            if not asset_type or not entity_name:
+            asset_type = task_data.get("asset_type_name", "props").lower()
+            if not entity_name:
                 return None
                 
             # Plantilla: assets/{type}/{asset}/{type}-{asset}-{task}.blend

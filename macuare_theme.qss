@@ -1,0 +1,203 @@
+/* =========================================================================================
+   OPENSTUDIOHUB
+   Módulo: macuare_theme.qss
+   Rol Arquitectónico: UI/UX Global Stylesheet (PySide6)
+   =========================================================================================
+   Copyright (c) 2026 Ernesto Del Valle Macuare. Todos los derechos reservados.
+   Licencia: GNU General Public License v3.0 (GPLv3)
+   
+   Autor: Ernesto Del Valle Macuare
+   Versión del archivo: 0.6.5
+   ========================================================================================= 
+*/
+
+/* ---------------------------------------------------------
+   GLOBAL WIDGET SETTINGS
+--------------------------------------------------------- */
+QWidget {
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    color: #F8FAFC;
+}
+
+QMainWindow, #ViewLoginBase {
+    background-color: #2E3643; /* Base sincronizada con el panel de login */
+}
+
+/* ---------------------------------------------------------
+   TOP BAR & BRANDING
+--------------------------------------------------------- */
+#TopBar {
+    background-color: #1F2531; /* Fondo top bar actualizado */
+    border-bottom: 1px solid #141820; /* Borde oscurecido acorde al fondo */
+}
+
+#TopSeparator {
+    background-color: #2E3643; /* Separador sutil */
+    border-radius: 1px;
+}
+
+#H1Title {
+    font-size: 20px;
+    font-weight: bold;
+    color: #6D7A8B; /* Color del texto del título ajustado al mockup */
+}
+
+#AvatarIcon {
+    font-size: 16px;
+    background-color: #2E3643;
+    border-radius: 17px; 
+    color: #94A3B8;
+}
+
+/* ---------------------------------------------------------
+   SIDEBAR NAVIGATION (TD VIEW)
+--------------------------------------------------------- */
+#SidebarNavInactive, #SidebarNavActive {
+    background-color: transparent;
+    color: #94A3B8;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    text-align: left;
+    padding: 14px 20px;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+#SidebarNavInactive:hover {
+    border: 1px solid #3B82F6; /* Azul tenue al hacer hover */
+    color: #E2E8F0;
+    background-color: rgba(59, 130, 246, 0.05);
+}
+
+#SidebarNavActive {
+    border: 1px solid #F97316; /* Naranja corporativo para elemento activo */
+    color: #F97316;
+    background-color: rgba(249, 115, 22, 0.05);
+}
+
+/* ---------------------------------------------------------
+   PANELS & CONTAINERS
+--------------------------------------------------------- */
+#LoginPanel {
+    background-color: #2E3643; /* Fondo corporativo suave ajustado al mockup */
+}
+
+#HeroPanel {
+    background-color: #1F2531;
+    border-left: 1px solid #1F2531; 
+}
+
+#FloatingCard {
+    background-color: #1F2531;
+    border: 1px solid #141820;
+    border-radius: 12px;
+}
+
+#CardTitle {
+    font-size: 24px;
+    font-weight: bold;
+    color: #F8FAFC;
+}
+
+#H2Title {
+    font-size: 16px;
+    font-weight: bold;
+    color: #F8FAFC;
+}
+
+/* ---------------------------------------------------------
+   INPUTS & FORMS
+--------------------------------------------------------- */
+#InputLabel {
+    color: #94A3B8;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+#FormInput {
+    background-color: #1F2531; /* Oscurecido respecto al fondo del panel */
+    border: 1px solid #475569;
+    border-radius: 8px;
+    padding: 0px 15px;
+    font-size: 13px;
+    color: #F8FAFC;
+}
+
+#FormInput:focus {
+    border: 1px solid #F97316; /* Blender Orange en Focus */
+    background-color: #1A1F29;
+}
+
+#FormInput::placeholder {
+    color: #64748B;
+}
+
+/* ---------------------------------------------------------
+   BUTTONS (Especificidad estricta para Linux/GTK Override)
+--------------------------------------------------------- */
+QPushButton#PrimaryButton {
+    background-color: #F97316; /* Blender Orange Base */
+    color: #FFFFFF;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+QPushButton#PrimaryButton:hover {
+    background-color: #EA580C;
+}
+
+QPushButton#PrimaryButton:pressed {
+    background-color: #C2410C;
+}
+
+QPushButton#PrimaryButton:disabled {
+    background-color: #334155; 
+    color: #64748B;
+}
+
+#SecondaryButton {
+    background-color: #1F2531;
+    color: #F8FAFC;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    font-weight: bold;
+}
+
+#SecondaryButton:hover {
+    background-color: #2E3643;
+}
+
+QPushButton#LinkButton {
+    background-color: transparent;
+    color: #3B82F6;
+    font-size: 12px;
+    border: none;
+    padding: 0;
+}
+
+QPushButton#LinkButton:hover {
+    color: #60A5FA;
+    text-decoration: underline;
+}
+
+/* ---------------------------------------------------------
+   ALERTS & STATUS
+--------------------------------------------------------- */
+#ErrorLabel {
+    color: #EF4444; 
+    font-size: 12px;
+    font-weight: bold;
+}
+
+#StatusBar {
+    background-color: #1F2531;
+    border-top: 1px solid #141820;
+}
+
+#StatusText {
+    color: #475569;
+    font-size: 10px;
+    font-weight: bold;
+}

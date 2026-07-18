@@ -7,12 +7,13 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.4.2
+# Versión del archivo: 0.5.0
 # =========================================================================================
 
 """
-Adaptador concreto para operaciones Subversion (SVN) vía CLI.
-Implementa el mecanismo de Sparse Checkout para orquestar el Jailing de Vendors.
+Concrete adapter for Subversion (SVN) operations via CLI.
+Implements the Sparse Checkout mechanism to orchestrate Vendor Jailing.
+Anchored to English standard.
 """
 
 import subprocess
@@ -21,20 +22,20 @@ from pathlib import Path
 from .abstract_vcs import AbstractVCS
 
 class SVNAdapter(AbstractVCS):
-    """Adaptador concreto para operaciones Subversion (SVN) vía CLI."""
+    """Concrete adapter for Subversion (SVN) operations via CLI."""
 
     def _build_auth_args(self, username: Optional[str], password: Optional[str]) -> List[str]:
-        """Construye los argumentos de autenticación sin guardarlos en disco."""
+        """Builds authentication arguments without caching them on disk."""
         args = ["--non-interactive", "--trust-server-cert"]
         if username and password:
             args.extend(["--username", username, "--password", password, "--no-auth-cache"])
         return args
 
     def _run_subprocess(self, cmd: List[str], cwd: Optional[Path] = None) -> str:
-        """Envoltorio seguro para ejecutar subprocesos capturando los errores."""
+        """Secure wrapper to execute subprocesses and capture errors."""
         cwd_path = str(cwd) if cwd else None
         
-        # === MODO DEBUG: Máscara de seguridad para no imprimir la clave en consola ===
+        # === DEBUG MODE: Security mask to avoid printing the password in the console ===
         safe_cmd = []
         skip_next = False
         for token in cmd:
@@ -47,7 +48,7 @@ class SVNAdapter(AbstractVCS):
             else:
                 safe_cmd.append(token)
                 
-        print(f"\n[SVN DEBUG] Ejecutando (CWD: {cwd_path or 'Actual'}):")
+        print(f"\n[SVN DEBUG] Executing (CWD: {cwd_path or 'Current'}):")
         print(f" -> {' '.join(safe_cmd)}")
         # ==============================================================================
 
@@ -61,35 +62,35 @@ class SVNAdapter(AbstractVCS):
             )
             return result.stdout
         except subprocess.CalledProcessError as e:
-            # Captura el stderr real de SVN (Ej. Password incorrecto) para pasarlo a la UI y a Consola
+            # Captures the real stderr from SVN (e.g., Incorrect Password) to pass it to the UI/Console
             error_msg = e.stderr.strip() if e.stderr else str(e)
-            print(f"[SVN ERROR FATAL] Código {e.returncode}: {error_msg}\n")
-            raise RuntimeError(f"Fallo de SVN: {error_msg}")
+            print(f"[SVN FATAL ERROR] Code {e.returncode}: {error_msg}\n")
+            raise RuntimeError(f"SVN Failure: {error_msg}")
 
     def full_pull(self, username: Optional[str] = None, password: Optional[str] = None) -> bool:
-        # Si la carpeta ya existe y es un repo SVN, hacemos update
+        # If the folder already exists and is an SVN repo, perform an update
         if (self.workspace_dir / ".svn").exists():
             cmd = ["svn", "update"]
             cmd.extend(self._build_auth_args(username, password))
             self._run_subprocess(cmd, cwd=self.workspace_dir)
         else:
-            # Si no, hacemos checkout completo
+            # Otherwise, perform a full checkout
             cmd = ["svn", "checkout", self.repo_url, str(self.workspace_dir)]
             cmd.extend(self._build_auth_args(username, password))
             self._run_subprocess(cmd)
         return True
 
     def sparse_pull(self, paths: List[str], username: Optional[str] = None, password: Optional[str] = None) -> bool:
-        """Descarga restrictiva (Jailing) para Vendors."""
-        # 1. Checkout inicial vacío (Trae solo la estructura, sin archivos)
+        """Restrictive download (Jailing) for Vendors."""
+        # 1. Empty checkout (Fetches only structure, no files)
         if not (self.workspace_dir / ".svn").exists():
             cmd_co = ["svn", "checkout", "--depth", "empty", self.repo_url, str(self.workspace_dir)]
             cmd_co.extend(self._build_auth_args(username, password))
             self._run_subprocess(cmd_co)
         
-        # 2. Descarga solo de los directorios aprobados en la lista de rutas
+        # 2. Download only the approved directories in the paths list
         for path in paths:
-            # FIX: Añadida la bandera --parents para construir la jerarquía vacía obligatoria
+            # FIX: Added the --parents flag to build the mandatory empty hierarchy
             cmd_up = ["svn", "update", "--set-depth", "infinity", "--parents", path]
             cmd_up.extend(self._build_auth_args(username, password))
             self._run_subprocess(cmd_up, cwd=self.workspace_dir)
@@ -124,7 +125,7 @@ class SVNAdapter(AbstractVCS):
     def get_status(self) -> Dict[str, str]:
         cmd = ["svn", "status"]
         output = self._run_subprocess(cmd, cwd=self.workspace_dir)
-        # Parseo crudo para devolver dict: {'A': 'ruta/archivo.blend', 'M': 'ruta/otro.blend'}
+        # Raw parsing to return dict: {'A': 'path/file.blend', 'M': 'path/other.blend'}
         status_dict = {}
         for line in output.splitlines():
             if len(line) > 8:
@@ -135,9 +136,8 @@ class SVNAdapter(AbstractVCS):
 
     def set_needs_lock(self, path: str) -> bool:
         """
-        Aplica la propiedad svn:needs-lock al archivo especificado.
-        Obliga al sistema de control de versiones a mantener el archivo
-        en modo 'Solo Lectura' hasta que un usuario autorizado lo bloquee.
+        Applies the svn:needs-lock property to the specified file.
+        Forces the VCS to keep the file in 'Read-Only' mode until an authorized user locks it.
         """
         cmd = ["svn", "propset", "svn:needs-lock", "*", path]
         self._run_subprocess(cmd, cwd=self.workspace_dir)
@@ -145,8 +145,8 @@ class SVNAdapter(AbstractVCS):
 
     def cleanup(self) -> bool:
         """
-        Sanea la base de datos interna local del VCS para resolver bloqueos locales (local locks)
-        provocados por cortes abruptos de energía, caídas de red o cierres forzados.
+        Sanitizes the local internal VCS database to resolve local locks
+        caused by abrupt power outages, network drops, or forced closures.
         """
         if self.workspace_dir.exists():
             cmd = ["svn", "cleanup"]

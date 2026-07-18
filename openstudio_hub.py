@@ -1,25 +1,28 @@
 # =========================================================================================
 # OPENSTUDIOHUB
 # Módulo: openstudio_hub.py
-# Rol Arquitectónico: Main App Root / Orquestador Inicial
+# Rol Arquitectónico: Main App Root / Orquestador Inicial (PySide6)
 # =========================================================================================
 # Copyright (c) 2026 Ernesto Del Valle Macuare. Todos los derechos reservados.
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.5.5
+# Versión del archivo: 0.7.1
 # =========================================================================================
 
 """
 Punto de entrada principal de OpenStudio Hub.
-Inicializa el entorno gráfico, lee la configuración maestra B2B,
-gestiona el enrutamiento base (Login vs Dashboard) e implementa
-el guardián de procesos en segundo plano.
+Inicializa el entorno gráfico nativo en Qt (PySide6), lee la configuración maestra B2B,
+gestiona el enrutamiento base (Login vs Dashboard) e implementa el guardián de procesos.
+Optimizado para Cero-Latencia en el arranque del Dashboard.
 """
 
-import customtkinter as ctk
-import tkinter.messagebox as messagebox
+import sys
 from pathlib import Path
+
+# --- PySide6 (Motor Gráfico) ---
+from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
+from PySide6.QtGui import QCloseEvent
 
 # --- CORE (Motores) ---
 from core.auth_manager import AuthManager
@@ -31,33 +34,27 @@ from ui.view_login import ViewLogin
 from ui.view_artist import ViewArtist
 from ui.view_td import ViewTD
 
-# --- CONFIGURACION GLOBAL ---
-ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("blue")
 
-class MacuareHub(ctk.CTk):
+class MacuareHub(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        # Título actualizado a la versión actual
-        self.title("OpenStudio Hub - v0.5.5")
-        self.geometry("1000x700") # Ampliado para dar espacio al nuevo Dashboard y Activity Feed
-        self.minsize(800, 600)
+        # Título base (Se sobrescribe dinámicamente tras el login)
+        self.setWindowTitle(self.tr("OpenStudio Hub - v0.7.1"))
+        self.resize(1000, 700) 
+        self.setMinimumSize(800, 600)
 
         # Guardián de Procesos (Protección de Lock Passing)
         self.blender_instances = 0
-        self.protocol("WM_DELETE_WINDOW", self._on_closing)
 
-        # 1. Inicializar los Motores
+        # 1. Inicializar los Motores Base
         self.auth = AuthManager()
         self.vault = VaultManager()
         
-        # Leemos la configuración global B2B
         settings_path = Path("settings.json")
         self.config_factory = ConfigFactory(settings_path)
 
-        # 2. Enrutador Inicial (State Machine)
-        # Política de Seguridad Estricta: Forzamos el Login siempre, ignorando tokens huérfanos.
+        # 2. Enrutador Inicial (State Machine MVC)
         self.mostrar_login()
 
     def registrar_instancia(self, activa: bool):
@@ -67,42 +64,49 @@ class MacuareHub(ctk.CTk):
         else:
             self.blender_instances = max(0, self.blender_instances - 1)
 
-    def _on_closing(self):
-        """Intercepta el cierre de la ventana para proteger los bloqueos de SVN y limpiar la RAM/Disco."""
+    def closeEvent(self, event: QCloseEvent):
+        """Intercepta el cierre de la ventana nativa de Qt para proteger la integridad del SVN."""
         if self.blender_instances > 0:
-            messagebox.showwarning(
-                "Operación Bloqueada",
-                f"Tienes {self.blender_instances} sesión(es) de entorno 3D abierta(s).\n\n"
-                "Cierra el programa primero para liberar los archivos maestros en el servidor (SVN Unlock) "
-                "y evitar corrupción en la producción."
+            mensaje = self.tr(
+                "You have {0} 3D environment session(s) open.\n\n"
+                "Please close the program first to release the master files on the server (SVN Unlock) "
+                "and avoid production corruption."
+            ).format(self.blender_instances)
+            
+            QMessageBox.warning(
+                self,
+                self.tr("Blocked Operation"),
+                mensaje
             )
+            event.ignore() 
         else:
-            # Destrucción absoluta de sesión al cerrar por la "X"
             self.auth.logout()
             self.vault.clear()
-            self.destroy()
-
-    def limpiar_pantalla(self):
-        """Destruye la vista actual para poder montar una nueva."""
-        for widget in self.winfo_children():
-            widget.destroy()
+            event.accept()
 
     def mostrar_login(self):
-        """Monta la vista de Login inyectando dependencias."""
-        self.limpiar_pantalla()
+        """Monta la vista de Login en el contenedor central."""
+        self.setWindowTitle(self.tr("OpenStudio Hub - v0.7.1"))
         
         vista_login = ViewLogin(
             parent=self, 
             auth_manager=self.auth, 
             vault_manager=self.vault, 
+            config_factory=self.config_factory,
             on_login_success=self.mostrar_dashboard
         )
-        vista_login.pack(fill="both", expand=True)
+        self.setCentralWidget(vista_login)
 
     def mostrar_dashboard(self):
-        """Monta la vista correcta dependiendo del rol extraído de Kitsu."""
-        self.limpiar_pantalla()
+        """Monta el Dashboard inyectando el contexto B2B local (Cero Latencia)."""
+        # Leemos el nombre del estudio directamente de la configuración local (SSoT)
+        studio_name = self.config_factory.get_studio_name()
+        if not studio_name:
+            studio_name = "OpenStudio"
+            
+        self.setWindowTitle(self.tr("{0} Hub - v0.7.1").format(studio_name))
         
+        # Enrutamiento de Vistas (Factory)
         rol = self.auth.get_user_role()
         nextcloud_dir = self.config_factory.get_workspace_root()
         
@@ -125,19 +129,35 @@ class MacuareHub(ctk.CTk):
                 on_logout=self.ejecutar_logout
             )
         
-        vista.pack(fill="both", expand=True)
+        self.setCentralWidget(vista)
 
     def ejecutar_logout(self):
-        """Limpia el estado global y devuelve al usuario al inicio."""
-        # Evitamos el logout si hay archivos bloqueados temporalmente
+        """Limpia el estado global de Qt y revierte al formulario de acceso."""
         if self.blender_instances > 0:
-            self._on_closing()
+            self.close() 
             return
             
         self.auth.logout()
-        self.vault.clear()  # Zero-Disk Passwords: Vaciamos la RAM
+        self.vault.clear()  
         self.mostrar_login()
 
 if __name__ == "__main__":
-    app = MacuareHub()
-    app.mainloop()
+    app = QApplication(sys.argv)
+    
+    # ---------------------------------------------------------
+    # INYECCIÓN GLOBAL DE ESTILOS (QSS)
+    # ---------------------------------------------------------
+    theme_path = Path("macuare_theme.qss")
+    if theme_path.exists():
+        try:
+            with open(theme_path, "r", encoding="utf-8") as f:
+                app.setStyleSheet(f.read())
+            print("[OPENSTUDIO HUB] ✓ Corporate QSS theme loaded successfully.")
+        except Exception as e:
+            print(f"[OPENSTUDIO HUB] ❌ Error reading QSS file: {e}")
+    else:
+        print("[OPENSTUDIO HUB] ⚠️ WARNING: 'macuare_theme.qss' not found. Starting with OS native theme.")
+        
+    window = MacuareHub()
+    window.show()
+    sys.exit(app.exec())
