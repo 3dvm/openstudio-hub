@@ -7,17 +7,20 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.2.0
+# Versión del archivo: 0.5.0 (Self-Healing NAS Rebuild)
 # =========================================================================================
 
 """
 Componente visual reutilizable para las Tarjetas de Proyectos en la vista del TD.
-Implementa un diseño moderno con dimensiones optimizadas (320x280) para mejorar 
-la densidad visual, y badges semánticos con la versión de Blender (SemVer).
+Implementa un diseño moderno con dimensiones optimizadas (320x280).
+Lee dinámicamente el estado físico en el NAS y expone el flujo de Autorrecuperación (Rebuild)
+en caso de extravío de la topografía.
 """
 
 import requests
+import json
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QLabel, 
                                QPushButton, QWidget)
@@ -42,7 +45,6 @@ class ProjectThumbnailWorker(QThread):
             return
 
         try:
-            # Endpoint nativo de Gazu para avatares de proyectos
             img_url = f"{self.host_url}/pictures/thumbnails/projects/{self.project_id}.png"
             headers = {"Authorization": f"Bearer {self.token}"}
             
@@ -59,13 +61,15 @@ class ProjectThumbnailWorker(QThread):
 
 
 class ProjectCard(QFrame):
-    def __init__(self, parent: QWidget, project_data: dict, auth_manager):
+    def __init__(self, parent: QWidget, project_data: dict, auth_manager, nextcloud_dir: Path, on_rebuild_callback: Callable = None):
         super().__init__(parent)
         
         self.project_data = project_data
         self.auth = auth_manager
+        self.nextcloud_dir = Path(nextcloud_dir) if nextcloud_dir else None
+        self.project_dir = None
+        self.on_rebuild_callback = on_rebuild_callback
         
-        # Dimensiones reducidas para densidad óptima (320x280)
         self.setObjectName("FloatingCard")
         self.setFixedSize(320, 280)
         
@@ -81,6 +85,7 @@ class ProjectCard(QFrame):
         """)
 
         self._build_ui()
+        self._check_nas_status()
         self._cargar_miniatura()
 
     def _build_ui(self):
@@ -89,7 +94,7 @@ class ProjectCard(QFrame):
         main_layout.setSpacing(10)
 
         # ---------------------------------------------------------
-        # Fila 1: Cabecera (Estado del proyecto y Menú de opciones)
+        # Fila 1: Cabecera (Estado del proyecto)
         # ---------------------------------------------------------
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
@@ -110,16 +115,16 @@ class ProjectCard(QFrame):
         main_layout.addLayout(header_layout)
 
         # ---------------------------------------------------------
-        # Fila 2: Miniatura del Proyecto (Escalada para 320px)
+        # Fila 2: Miniatura del Proyecto
         # ---------------------------------------------------------
-        self.thumb_label = QLabel("Cargando miniatura...")
+        self.thumb_label = QLabel(self.tr("Loading thumbnail..."))
         self.thumb_label.setAlignment(Qt.AlignCenter)
         self.thumb_label.setFixedHeight(140)
         self.thumb_label.setStyleSheet("background-color: #0F172A; border-radius: 8px; color: #475569; font-style: italic;")
         main_layout.addWidget(self.thumb_label)
 
         # ---------------------------------------------------------
-        # Fila 3: Título del Proyecto y Badge (SemVer Blender)
+        # Fila 3: Título del Proyecto y Badge Dinámico
         # ---------------------------------------------------------
         title_layout = QHBoxLayout()
         title_layout.setContentsMargins(0, 5, 0, 0)
@@ -131,15 +136,15 @@ class ProjectCard(QFrame):
         
         title_layout.addStretch()
         
-        # Ajuste a formato de 3 dígitos (Ej. 4.2.0)
-        self.lbl_badge = QLabel("Blender 4.2.0")
+        # Badge con paleta limpia (Gris sutil) para no competir con el CTA primario
+        self.lbl_badge = QLabel(self.tr("Checking..."))
         self.lbl_badge.setAlignment(Qt.AlignCenter)
         self.lbl_badge.setFixedHeight(22)
         self.lbl_badge.setStyleSheet("""
-            background-color: transparent;
-            color: #F97316;
-            border: 1px solid #F97316;
-            border-radius: 10px;
+            background-color: #0F172A;
+            color: #94A3B8;
+            border: 1px solid #334155;
+            border-radius: 6px;
             padding: 0 8px;
             font-size: 10px;
             font-weight: bold;
@@ -149,22 +154,76 @@ class ProjectCard(QFrame):
         main_layout.addLayout(title_layout)
 
         # ---------------------------------------------------------
-        # Fila 4: Footer (Estado de Sincronización del Servidor)
+        # Fila 4: Footer (Estado de Sincronización Real del NAS y CTA Rebuild)
         # ---------------------------------------------------------
         footer_layout = QHBoxLayout()
         footer_layout.setContentsMargins(0, 5, 0, 0)
         
-        lbl_sync_type = QLabel("🗄️ Server Sync")
-        lbl_sync_type.setStyleSheet("color: #64748B; font-size: 12px;")
-        footer_layout.addWidget(lbl_sync_type)
+        self.lbl_sync_status = QLabel(self.tr("🗄️ Checking..."))
+        self.lbl_sync_status.setStyleSheet("color: #94A3B8; font-size: 12px; font-weight: bold;")
+        footer_layout.addWidget(self.lbl_sync_status)
         
         footer_layout.addStretch()
         
-        self.lbl_sync_status = QLabel("🟢 Synced")
-        self.lbl_sync_status.setStyleSheet("color: #10B981; font-size: 12px; font-weight: bold;")
-        footer_layout.addWidget(self.lbl_sync_status)
+        # Botón de Autorrecuperación (Oculto por defecto)
+        self.btn_rebuild = QPushButton(self.tr("Rebuild NAS"))
+        self.btn_rebuild.setCursor(Qt.PointingHandCursor)
+        self.btn_rebuild.setStyleSheet("""
+            QPushButton { border: 1px solid #F59E0B; color: #F59E0B; background: transparent; border-radius: 6px; font-weight: bold; font-size: 11px; padding: 4px 10px; }
+            QPushButton:hover { background-color: rgba(245, 158, 11, 0.1); }
+        """)
+        self.btn_rebuild.setVisible(False)
+        self.btn_rebuild.clicked.connect(self._on_rebuild_clicked)
+        footer_layout.addWidget(self.btn_rebuild)
         
         main_layout.addLayout(footer_layout)
+
+    def _check_nas_status(self):
+        """Valida físicamente la existencia del directorio e intercepta metadatos inmutables."""
+        if not self.nextcloud_dir:
+            self.lbl_sync_status.setText(self.tr("🗄️ 🔴 Disconnected"))
+            self.lbl_sync_status.setStyleSheet("color: #EF4444; font-size: 12px; font-weight: bold;")
+            self.lbl_badge.setText(self.tr("Unknown"))
+            self.btn_rebuild.setVisible(False)
+            return
+
+        p_name = self.project_data.get("name", "Unknown")
+        p_code = self.project_data.get("code", p_name)
+
+        # Mapear ruta por nombre del proyecto o código abreviado
+        self.project_dir = self.nextcloud_dir / p_name
+        if not self.project_dir.exists() and p_code:
+            self.project_dir = self.nextcloud_dir / p_code
+
+        # Evaluar existencia en el FileSystem local/compartido
+        if self.project_dir.exists():
+            self.lbl_sync_status.setText(self.tr("🗄️ 🟢 Synced"))
+            self.lbl_sync_status.setStyleSheet("color: #10B981; font-size: 12px; font-weight: bold;")
+            self.btn_rebuild.setVisible(False)
+            
+            # Buscar archivo de variables de entorno oculto del Hub
+            meta_file = self.project_dir / ".openstudio.json"
+            if meta_file.exists():
+                try:
+                    with open(meta_file, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    blender_ver = meta.get("blender_version", "Blender 4.2.0")
+                    self.lbl_badge.setText(blender_ver)
+                except Exception:
+                    self.lbl_badge.setText(self.tr("Meta Error"))
+            else:
+                self.lbl_badge.setText(self.tr("Blender 4.2.0")) # Fallback tolerado
+        else:
+            # Exponer la vía de autorrecuperación si la topografía está desaparecida
+            self.lbl_sync_status.setText(self.tr("🗄️ 🔴 Not Mounted"))
+            self.lbl_sync_status.setStyleSheet("color: #EF4444; font-size: 12px; font-weight: bold;")
+            self.lbl_badge.setText(self.tr("Missing Folder"))
+            self.btn_rebuild.setVisible(True)
+
+    def _on_rebuild_clicked(self):
+        """Despacha la señal de autorrecuperación a la vista padre."""
+        if self.on_rebuild_callback:
+            self.on_rebuild_callback(self.project_data)
 
     def _cargar_miniatura(self):
         project_id = self.project_data.get("id")

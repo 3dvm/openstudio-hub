@@ -24,7 +24,7 @@ from typing import List, Dict
 class ManifestManager:
     def __init__(self, vault_root: Path):
         self.vault_root = vault_root
-        self.software_dir = self.vault_root / "00_SOFTWARE"
+        self.software_dir = self.vault_root / "blender_versions"
         self.manifest_path = self.software_dir / "vault_manifest.json"
         
         # Ensure directories exist

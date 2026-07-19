@@ -7,25 +7,24 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.6.1
+# Versión del archivo: 0.9.0 (Ephemeral VCS Auth UI Injection)
 # =========================================================================================
 
 """
 Asistente modal para la creación de nuevos proyectos (TD Wizard).
-Migrado a PySide6. Actúa como un QDialog modal, lee el manifiesto maestro B2B 
-para renderizar opciones de dependencias, resuelve prerrequisitos lógicos (Auto-Check)
-y delega la carga masiva al ProjectBuilder mediante un QThread. Incorpora Auto-Sembrado.
+Implementa validaciones estrictas de plantillas y campos de autenticación 
+VCS efímeros en la UI para sobreescribir el SSO sin persistencia en disco.
 """
 
-import json
 from pathlib import Path
-
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-                               QLineEdit, QComboBox, QCheckBox, QPushButton, 
-                               QScrollArea, QWidget, QFileDialog)
+                               QLineEdit, QComboBox, QCheckBox, QRadioButton, 
+                               QButtonGroup, QPushButton, QScrollArea, QWidget, 
+                               QFileDialog)
 from PySide6.QtCore import Qt, QThread, Signal
 
 from core.project_builder import ProjectBuilder
+from core.vault_manager import VaultManager
 
 
 class ProjectCreationWorker(QThread):
@@ -33,7 +32,7 @@ class ProjectCreationWorker(QThread):
     result = Signal(bool, str)
 
     def __init__(self, builder: ProjectBuilder, nombre: str, version: str, 
-                 dependencias: dict, template: str, splash: str):
+                 dependencias: dict, template: str, splash: str, vcs_user: str, vcs_pwd: str):
         super().__init__()
         self.builder = builder
         self.nombre = nombre
@@ -41,6 +40,8 @@ class ProjectCreationWorker(QThread):
         self.dependencias = dependencias
         self.template = template
         self.splash = splash
+        self.vcs_user = vcs_user
+        self.vcs_pwd = vcs_pwd
 
     def run(self):
         exito, mensaje = self.builder.create_project(
@@ -48,37 +49,27 @@ class ProjectCreationWorker(QThread):
             blender_version=self.version, 
             dependencies=self.dependencias, 
             project_template=self.template, 
-            splash_image_path=self.splash
+            splash_image_path=self.splash,
+            vcs_user=self.vcs_user,
+            vcs_pwd=self.vcs_pwd
         )
         self.result.emit(exito, mensaje)
 
 
 class NewProjectWindow(QDialog):
-    def __init__(self, parent: QWidget, nextcloud_dir: Path, config_factory, on_success_callback):
+    def __init__(self, parent: QWidget, config_factory, on_success_callback):
         super().__init__(parent)
-        
         self.setWindowTitle("Nuevo Proyecto")
-        self.setFixedSize(500, 750)
+        self.setFixedSize(500, 700) # Más compacta sin los campos de Auth
         self.setModal(True)
-
         self.ruta_splash = ""
         self.config_factory = config_factory
         self.on_success = on_success_callback
-        
-        # Inyectar dependencias actualizadas al motor de construcción
-        self.builder = ProjectBuilder(nextcloud_dir, self.config_factory)
-        
-        # Rutas dinámicas de la bóveda (Alineado con ConfigFactory)
-        try:
-            self.vault_root = self.config_factory.get_workspace_root() / "04_BIBLIOTECA_ASSETS"
-        except Exception:
-            self.vault_root = nextcloud_dir.parent / "04_BIBLIOTECA_ASSETS"
-            
-        self.vault_manifest_path = self.vault_root / "00_SOFTWARE" / "vault_manifest.json"
-        
-        self.vault_data = self._cargar_vault_manifest()
-        self.checkboxes_herramientas = {}  # {categoria: {nombre: {'checkbox': QCheckBox, 'version': str}}}
-
+        self.builder = ProjectBuilder(self.config_factory)
+        self.vault_manager = VaultManager(self.config_factory)
+        self.vault_data = self.vault_manager.cargar_inventario()
+        self.checkboxes_herramientas = {}
+        self.template_group = None
         self.setObjectName("ViewLoginBase")
         self._build_ui()
 
@@ -94,19 +85,17 @@ class NewProjectWindow(QDialog):
         
         main_layout.addSpacing(10)
 
-        # 1. Nombre
         self.entry_nombre = QLineEdit()
         self.entry_nombre.setObjectName("FormInput")
         self.entry_nombre.setPlaceholderText("Nombre (ej. p0004-nuevo-proyecto)")
         self.entry_nombre.setFixedHeight(45)
         main_layout.addWidget(self.entry_nombre)
 
-        # 2. Selector de Versión de Blender
         lbl_version = QLabel("Versión de Blender Objetivo:")
         lbl_version.setStyleSheet("font-weight: bold; margin-top: 10px;")
         main_layout.addWidget(lbl_version)
         
-        versiones = list(self.vault_data.keys()) if self.vault_data else ["5.1.2"]
+        versiones = list(self.vault_data.keys()) if self.vault_data else []
         self.combo_version = QComboBox()
         self.combo_version.addItems(versiones)
         self.combo_version.setFixedHeight(40)
@@ -114,7 +103,6 @@ class NewProjectWindow(QDialog):
         self.combo_version.currentTextChanged.connect(self.dibujar_dependencias_dinamicas)
         main_layout.addWidget(self.combo_version)
 
-        # 3. Componentes y Dependencias (Categorizado)
         lbl_addons = QLabel("Componentes de Bóveda (vault_manifest.json):")
         lbl_addons.setStyleSheet("font-weight: bold; margin-top: 15px;")
         main_layout.addWidget(lbl_addons)
@@ -127,14 +115,12 @@ class NewProjectWindow(QDialog):
         self.addons_widget.setStyleSheet("background: transparent;")
         self.addons_layout = QVBoxLayout(self.addons_widget)
         self.addons_layout.setAlignment(Qt.AlignTop)
-        
         self.scroll_addons.setWidget(self.addons_widget)
         main_layout.addWidget(self.scroll_addons, stretch=1)
 
         if versiones:
             self.dibujar_dependencias_dinamicas(self.combo_version.currentText())
 
-        # 4. Splash Screen
         lbl_splash = QLabel("Splash Screen Personalizado (1000x500px):")
         lbl_splash.setStyleSheet("font-weight: bold; margin-top: 10px;")
         main_layout.addWidget(lbl_splash)
@@ -146,17 +132,14 @@ class NewProjectWindow(QDialog):
         self.btn_splash.setObjectName("SecondaryButton")
         self.btn_splash.setFixedSize(120, 35)
         self.btn_splash.setCursor(Qt.PointingHandCursor)
-        self.btn_splash.setStyleSheet("background-color: #4F46E5; color: white; border-radius: 6px; font-weight: bold;")
         self.btn_splash.clicked.connect(self.seleccionar_splash)
         splash_layout.addWidget(self.btn_splash)
 
         self.lbl_splash_name = QLabel("Ninguna imagen")
         self.lbl_splash_name.setStyleSheet("color: #64748B; padding-left: 10px;")
         splash_layout.addWidget(self.lbl_splash_name, stretch=1)
-
         main_layout.addLayout(splash_layout)
 
-        # Feedback y Botón de Acción
         self.lbl_status = QLabel("")
         self.lbl_status.setAlignment(Qt.AlignCenter)
         self.lbl_status.hide()
@@ -169,170 +152,107 @@ class NewProjectWindow(QDialog):
         self.btn_crear.clicked.connect(self.ejecutar_creacion)
         main_layout.addWidget(self.btn_crear)
 
+        if not self.vault_data:
+            self.lbl_status.setText("⚠️ OPERACIÓN BLOQUEADA: Bóveda no inicializada.")
+            self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold; padding: 12px; background-color: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 6px;")
+            self.lbl_status.show()
+            self.entry_nombre.setEnabled(False)
+            self.combo_version.setEnabled(False)
+            self.btn_splash.setEnabled(False)
+            self.btn_crear.setEnabled(False)
+
     def seleccionar_splash(self):
-        ruta, _ = QFileDialog.getOpenFileName(
-            self, "Seleccionar Splash Screen del Proyecto", "", "Imágenes PNG (*.png)"
-        )
+        ruta, _ = QFileDialog.getOpenFileName(self, "Seleccionar Splash Screen", "", "Imágenes PNG (*.png)")
         if ruta:
             self.ruta_splash = ruta
-            nombre_archivo = Path(ruta).name
-            self.lbl_splash_name.setText(nombre_archivo)
+            self.lbl_splash_name.setText(Path(ruta).name)
             self.lbl_splash_name.setStyleSheet("color: #F8FAFC; padding-left: 10px;")
-
-    def _cargar_vault_manifest(self) -> dict:
-        """
-        Lee el manifiesto maestro B2B. Implementa Auto-Sembrado (Auto-Seeding)
-        para aprovisionar estudios nuevos mitigando bloqueos estructurales.
-        """
-        data = {}
-        
-        # Auto-Sembrado si la bóveda no ha sido inicializada
-        if not self.vault_manifest_path.exists():
-            print(f"[WIZARD INFO] Inicializando bóveda por primera vez en: {self.vault_manifest_path}")
-            self.vault_manifest_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            esqueleto_base = {
-                "v5.1.2": {
-                    "blender_version": "5.1.2",
-                    "categories": {
-                        "templates": {
-                            "Macuare_Estudio_Base": {
-                                "version": "1.0",
-                                "description": "Plantilla oficial generada automáticamente",
-                                "mandatory": True,
-                                "requires": []
-                            }
-                        },
-                        "addons": {}
-                    }
-                }
-            }
-            try:
-                with open(self.vault_manifest_path, 'w', encoding='utf-8') as f:
-                    json.dump(esqueleto_base, f, indent=4)
-            except Exception as e:
-                print(f"[WIZARD ERROR] Fallo en el auto-sembrado: {e}")
-
-        # Lectura regular
-        if self.vault_manifest_path.exists():
-            try:
-                with open(self.vault_manifest_path, 'r', encoding='utf-8') as f:
-                    manifesto_crudo = json.load(f)
-                    for _, bl_version_data in manifesto_crudo.items():
-                        version = bl_version_data.get("blender_version")
-                        if version:
-                            data[version] = bl_version_data.get("categories", {})
-            except Exception as e:
-                print(f"[UI ERROR] Fallo al parsear vault_manifest: {e}")
-                
-        return data
 
     def _clear_addons_layout(self):
         while self.addons_layout.count():
             child = self.addons_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+            if child.widget(): child.widget().deleteLater()
 
     def dibujar_dependencias_dinamicas(self, version_seleccionada: str):
-        """Renderiza las categorías y herramientas leyendo el manifesto de la bóveda."""
         self._clear_addons_layout()
         self.checkboxes_herramientas.clear()
+        self.template_group = QButtonGroup(self)
+        if not version_seleccionada: return
 
         categorias_disponibles = self.vault_data.get(version_seleccionada, {})
-
-        if not categorias_disponibles:
-            lbl_empty = QLabel("No hay componentes definidos para esta versión.")
-            lbl_empty.setStyleSheet("color: #64748B; padding: 20px;")
-            self.addons_layout.addWidget(lbl_empty)
-            return
+        if not categorias_disponibles: return
 
         for categoria, items in categorias_disponibles.items():
             lbl_cat = QLabel(f"[{categoria.upper()}]")
             lbl_cat.setStyleSheet("color: #10B981; font-weight: bold; margin-top: 10px;")
             self.addons_layout.addWidget(lbl_cat)
-            
             self.checkboxes_herramientas[categoria] = {}
 
             for nombre_item, datos in items.items():
                 version_item = datos.get("version", "1.0")
                 es_obligatorio = datos.get("mandatory", False)
-                descripcion = datos.get("description", "")
-                requires = datos.get("requires", [])
-
-                texto_label = f"{nombre_item} v{version_item} - {descripcion}"
+                texto_label = f"{nombre_item} v{version_item} - {datos.get('description', '')}"
                 
-                cb = QCheckBox(texto_label)
-                cb.setStyleSheet("QCheckBox { color: #F8FAFC; padding: 5px; } QCheckBox::indicator { width: 15px; height: 15px; }")
+                if categoria == "templates":
+                    cb = QRadioButton(texto_label)
+                    cb.setStyleSheet("QRadioButton { color: #F8FAFC; padding: 5px; }")
+                    self.template_group.addButton(cb)
+                else:
+                    cb = QCheckBox(texto_label)
+                    cb.setStyleSheet("QCheckBox { color: #F8FAFC; padding: 5px; }")
                 
-                cb.toggled.connect(lambda checked, c=categoria, n=nombre_item, r=requires: self._resolver_subdependencias(checked, c, n, r))
-                
+                cb.toggled.connect(lambda checked, c=categoria, n=nombre_item, r=datos.get("requires", []): self._resolver_subdependencias(checked, c, n, r))
                 self.addons_layout.addWidget(cb)
 
                 if es_obligatorio:
                     cb.setChecked(True)
                     cb.setEnabled(False)
 
-                self.checkboxes_herramientas[categoria][nombre_item] = {
-                    'checkbox': cb,
-                    'version': version_item
-                }
+                self.checkboxes_herramientas[categoria][nombre_item] = {'checkbox': cb, 'version': version_item}
 
     def _resolver_subdependencias(self, checked: bool, categoria_padre: str, nombre_padre: str, requires: list):
-        """Auto-selecciona y bloquea dependencias subordinadas si el padre es activado."""
-        if not checked:
-            return 
-            
         for req in requires:
             partes = req.split("/")
             if len(partes) != 2: continue
-            
             cat_req, nom_req = partes[0], partes[1]
-            
             if cat_req in self.checkboxes_herramientas and nom_req in self.checkboxes_herramientas[cat_req]:
-                sub_dict = self.checkboxes_herramientas[cat_req][nom_req]
-                cb_sub = sub_dict['checkbox']
-                
-                cb_sub.setChecked(True)
-                cb_sub.setEnabled(False)
-                cb_sub.setStyleSheet("QCheckBox { color: #F59E0B; padding: 5px; }")
+                cb_sub = self.checkboxes_herramientas[cat_req][nom_req]['checkbox']
+                cb_sub.setChecked(checked)
+                cb_sub.setEnabled(not checked)
 
     def ejecutar_creacion(self):
-        """Valida, aplana el diccionario de dependencias y delega a ProjectBuilder vía QThread."""
         nombre = self.entry_nombre.text().strip()
         version_blender = self.combo_version.currentText().strip()
 
-        if not nombre:
-            self.lbl_status.setText("El nombre del proyecto es obligatorio.")
-            self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold;")
-            self.lbl_status.show()
-            return
-            
-        if not nombre.replace("-", "").replace("_", "").isalnum():
-            self.lbl_status.setText("Solo caracteres alfanuméricos, guiones o guiones bajos.")
-            self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold;")
+        if not nombre or not nombre.replace("-", "").replace("_", "").isalnum():
+            self.lbl_status.setText("Nombre inválido.")
             self.lbl_status.show()
             return
 
-        dependencias_finales = {}
-        template_principal = "Macuare_Estudio"
-        
+        dependencias_finales, template_principal = {}, None
         for categoria, items in self.checkboxes_herramientas.items():
             dependencias_finales[categoria] = {}
             for nombre_item, data in items.items():
                 if data['checkbox'].isChecked():
                     dependencias_finales[categoria][nombre_item] = data['version']
-                    if categoria == "templates":
-                        template_principal = nombre_item
+                    if categoria == "templates": template_principal = nombre_item
+
+        if not template_principal: template_principal = "Macuare_Estudio"
+
+        # RESOLUCIÓN DESDE EL JSON (Sin interfaz gráfica que estorbe)
+        vcs_config = self.config_factory.get_raw_config().get("vcs_engine", {})
+        user_vcs = vcs_config.get("vcs_username", "admin")
+        pwd_vcs = vcs_config.get("vcs_password", "admin123")
 
         self.btn_crear.setEnabled(False)
         self.btn_crear.setText("Creando...")
-        self.lbl_status.setText("Estructurando directorios y subiendo al servidor...")
+        self.lbl_status.setText("Forjando estructura y conectando repositorios...")
         self.lbl_status.setStyleSheet("color: #F59E0B; font-weight: bold;")
         self.lbl_status.show()
 
         self.worker = ProjectCreationWorker(
             self.builder, nombre, version_blender, dependencias_finales, 
-            template_principal, self.ruta_splash
+            template_principal, self.ruta_splash, user_vcs, pwd_vcs
         )
         self.worker.result.connect(self._on_creation_finished)
         self.worker.finished.connect(self.worker.deleteLater)

@@ -7,13 +7,14 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 1.0.1
+# Versión del archivo: 1.2.0 (NAS Data Directory Pipeline)
 # =========================================================================================
 
 """
 Componente independiente para la Lista de Proyectos del TD.
 Encapsula la lógica de cuadrícula responsiva, extracción de datos vía Kitsu
 y el botón de creación de nuevos proyectos.
+Ahora inyecta la ruta de Nextcloud (NAS) a las tarjetas para permitir lecturas dinámicas.
 """
 
 from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QGridLayout, 
@@ -62,7 +63,6 @@ class ProjectListWidget(QFrame):
         self._current_cols = 0
         
         self.setObjectName("ProjectListWidgetBase")
-        self.setStyleSheet("background: transparent;")
         
         self._build_ui()
 
@@ -71,25 +71,35 @@ class ProjectListWidget(QFrame):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(20)
 
-        # HERO ACTION (Botón Crear Proyecto)
-        self.btn_nuevo_proy = QPushButton("+ Create New Project")
+        # ---------------------------------------------------------
+        # HERO ACTION (Botón Crear Proyecto Equilibrado)
+        # ---------------------------------------------------------
+        hero_layout = QHBoxLayout()
+        hero_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # El stretch empuja el botón a la derecha para no ocupar todo el ancho
+        hero_layout.addStretch()
+        
+        self.btn_nuevo_proy = QPushButton(self.tr("+ Create New Project"))
         self.btn_nuevo_proy.setObjectName("PrimaryButton") 
-        self.btn_nuevo_proy.setFixedHeight(50)
+        self.btn_nuevo_proy.setFixedSize(220, 40)
         self.btn_nuevo_proy.setCursor(Qt.PointingHandCursor)
-        # Corrección B2B: Forzado explícito de hoja de estilo para igualar el mockup corporativo
-        self.btn_nuevo_proy.setStyleSheet("background-color: #10B981; color: #0F172A; font-weight: bold; border-radius: 8px; font-size: 14px; border: none;")
         self.btn_nuevo_proy.clicked.connect(self.abrir_wizard_proyecto)
-        content_layout.addWidget(self.btn_nuevo_proy)
+        hero_layout.addWidget(self.btn_nuevo_proy)
+        
+        content_layout.addLayout(hero_layout)
 
+        # ---------------------------------------------------------
         # CONTENEDOR GRID CON SCROLL
+        # ---------------------------------------------------------
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self.scroll_area.setObjectName("InvisibleScrollArea")
         
         self.grid_widget = QWidget()
-        self.grid_widget.setStyleSheet("background: transparent;")
+        self.grid_widget.setObjectName("TransparentGridContainer")
         self.grid_layout = QGridLayout(self.grid_widget)
-        self.grid_layout.setSpacing(10)  
+        self.grid_layout.setSpacing(15)  
         self.grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         
         self.scroll_area.setWidget(self.grid_widget)
@@ -137,7 +147,7 @@ class ProjectListWidget(QFrame):
             self.status_callback(mensaje, color)
 
     def cargar_proyectos(self):
-        self._emit_status("🔄 Sincronizando catálogo de proyectos con el servidor...", "yellow")
+        self._emit_status(self.tr("Fetching projects catalog from server..."), "yellow")
         
         for widget in self._project_widgets:
             widget.hide()
@@ -156,21 +166,23 @@ class ProjectListWidget(QFrame):
 
     def _renderizar_proyectos(self, proyectos: list):
         if not proyectos:
-            self._emit_status("⚠️ No hay proyectos abiertos en Kitsu.", "yellow")
+            self._emit_status(self.tr("No open projects found in Kitsu."), "yellow")
             return
             
-        self._emit_status(f"🟢 Sincronizado: {len(proyectos)} proyectos activos.", "green")
+        self._emit_status(self.tr("🟢 Synchronized: {0} active projects.").format(len(proyectos)), "green")
         
         for project_data in proyectos:
             if ProjectCard:
+                # Inyección estratégica del path raíz de almacenamiento local/NAS hacia el componente hijo
                 tarjeta = ProjectCard(
                     parent=self.grid_widget,
                     project_data=project_data,
-                    auth_manager=self.auth
+                    auth_manager=self.auth,
+                    nextcloud_dir=self.nextcloud_dir
                 )
             else:
                 tarjeta = QLabel(f"📦 {project_data.get('name', 'Unknown')}")
-                tarjeta.setStyleSheet("background-color: #1E293B; border-radius: 8px; padding: 20px; font-weight: bold;")
+                tarjeta.setObjectName("ProjectCardFallback")
                 tarjeta.setFixedSize(320, 280)
 
             self._project_widgets.append(tarjeta)
@@ -179,10 +191,8 @@ class ProjectListWidget(QFrame):
         self._rearrange_grid()
 
     def abrir_wizard_proyecto(self):
-        # Corrección de API: Se inyecta la dependencia requerida 'config_factory' al Wizard.
         self.wizard_window = NewProjectWindow(
             parent=self.window(),
-            nextcloud_dir=self.nextcloud_dir,
             config_factory=self.config_factory,
             on_success_callback=self.cargar_proyectos
         )

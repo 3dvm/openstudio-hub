@@ -7,14 +7,14 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.8.0
+# Versión del archivo: 0.9.0 (Encapsulation & Default Fallbacks)
 # =========================================================================================
 
 """
 Bidirectional parser and persistent CRUD engine for the settings.json file.
 Manages atomic injection of NAS paths, API endpoints, and Semantic Topography.
 Implements the B2B Provisioning Engine (Seed Generator/Importer) via zlib and base64.
-Anchored to English standard for docstrings and I/O logs.
+Strictly encapsulates Fallback logic (Defaults) to keep UI components decoupled.
 """
 
 import json
@@ -142,6 +142,7 @@ class ConfigFactory:
             repo_url = vcs_data.get("repository_url", "").strip()
             
             topo_data = datos_dict.get("project_topography", {})
+            infra_data = datos_dict.get("infrastructure_topology", {})
             
             # 2. B2B Schema Scaffolding
             if "studio_profile" not in self._config: self._config["studio_profile"] = {}
@@ -149,8 +150,9 @@ class ConfigFactory:
             if "kitsu_production" not in self._config: self._config["kitsu_production"] = {}
             if "macuare_services" not in self._config: self._config["macuare_services"] = {}
             if "project_topography" not in self._config: self._config["project_topography"] = {}
+            if "infrastructure_topology" not in self._config: self._config["infrastructure_topology"] = {}
 
-            # 3. Semantic Validations
+            # 3. Semantic Validations & Injection
             if "local_workspace_root" not in self._config["vcs_engine"]:
                 self._config["vcs_engine"]["local_workspace_root"] = {}
             
@@ -172,6 +174,10 @@ class ConfigFactory:
                 self._config["project_topography"]["vfs_local"] = topo_data.get("vfs_local", "local")
                 self._config["project_topography"]["vfs_pipeline"] = topo_data.get("vfs_pipeline", "pipeline")
                 self._config["project_topography"]["custom_dirs"] = topo_data.get("custom_dirs", [])
+                
+            # Infrastructure & Vault Mapping
+            if infra_data:
+                self._config["infrastructure_topology"]["vault_path"] = infra_data.get("vault_path", "")
 
             # Parametric Adapter Selection
             vcs_clean = vcs_sys.lower()
@@ -222,15 +228,29 @@ class ConfigFactory:
         else: return "linux"
 
     def get_workspace_root(self) -> Path:
+        """Returns the base projects directory. Implements Day-0 Fallbacks."""
         os_key = self._get_current_os()
         vcs_config = self._config.get("vcs_engine", {})
         roots = vcs_config.get("local_workspace_root", {})
         
         root_str = roots.get(os_key)
         if not root_str:
-            raise ValueError(f"Missing 'local_workspace_root' mapping in settings.json for OS: {os_key}")
+            # Fallback seguro en lugar de romper la app con ValueError
+            return Path.home() / "openstudio_projects"
             
         return Path(root_str)
+        
+    def get_vault_path(self) -> Path:
+        """
+        Returns the absolute path to the Vault.
+        Calculates dynamic fallback based on workspace_root if unconfigured.
+        """
+        vault_str = self._config.get("infrastructure_topology", {}).get("vault_path", "")
+        if vault_str:
+            return Path(vault_str)
+            
+        # Fallback dinámico
+        return self.get_workspace_root() / "openstudio_vault"
 
     def get_vcs_adapter_type(self) -> str:
         return self._config.get("vcs_engine", {}).get("active_adapter", "svn")

@@ -1,50 +1,128 @@
+# =========================================================================================
+# OPENSTUDIOHUB
+# Módulo: core/vault_manager.py
+# Rol Arquitectónico: Core Service / Vault Inventory Engine & Session Bridge
+# =========================================================================================
+# Copyright (c) 2026 Ernesto Del Valle Macuare. Todos los derechos reservados.
+# Licencia: GNU General Public License v3.0 (GPLv3)
+#
+# Autor: Ernesto Del Valle Macuare
+# Versión del archivo: 1.0.1 (Session State & Clear Patch)
+# =========================================================================================
+
+"""
+Centralized CRUD manager for the vault_manifest.json shared inventory file.
+Acts as the Single Source of Truth for software availability, templates, and addons.
+Implements robust polymorphic parsing and retains transient credentials compatibility.
+"""
+
+import json
+from pathlib import Path
+
 class VaultManager:
-    """
-    Gestor de Bóveda en Memoria (RAM).
-    Almacena credenciales críticas de la sesión.
-    Garantiza el principio Zero-Disk Passwords evitando la persistencia en disco duro.
-    """
-    def __init__(self):
-        # Credenciales VCS (SVN / Git LFS)
-        self._svn_user: str = ""
-        self._svn_password: str = ""
+    def __init__(self, config_factory):
+        """
+        Inicializa el gestor de inventario inyectando dinámicamente la fábrica de configuración.
+        """
+        self.config_factory = config_factory
+        self._cached_manifest = {}
         
-        # Credenciales Kitsu (Para inyección automatizada)
-        self._kitsu_email: str = ""
-        self._kitsu_password: str = ""
+        # Estado efímero de sesión (Compatibilidad con el flujo legacy de login)
+        self._transient_email = None
+        self._transient_password = None
 
-    def save_svn_credentials(self, user: str, password: str) -> None:
-        """Guarda las credenciales del Control de Versiones (VCS) en la sesión actual."""
-        self._svn_user = user
-        self._svn_password = password
+    @property
+    def manifest_path(self) -> Path:
+        """Resuelve reactivamente la coordenada real del manifiesto en la raíz de la Bóveda."""
+        return self.config_factory.get_vault_path() / "vault_manifest.json"
 
-    def get_svn_credentials(self) -> tuple[str, str]:
-        """Retorna una tupla con (usuario_vcs, contraseña_vcs)."""
-        return self._svn_user, self._svn_password
-
-    def has_svn_credentials(self) -> bool:
-        """Verifica si las credenciales del repositorio existen en la memoria RAM."""
-        return bool(self._svn_user and self._svn_password)
-
-    def save_kitsu_credentials(self, email: str, password: str) -> None:
-        """Guarda las credenciales de Kitsu capturadas en el formulario de Login."""
-        self._kitsu_email = email
-        self._kitsu_password = password
-
-    def get_kitsu_credentials(self) -> tuple[str, str]:
-        """Retorna una tupla con (email_kitsu, contraseña_kitsu)."""
-        return self._kitsu_email, self._kitsu_password
-
-    def has_kitsu_credentials(self) -> bool:
-        """Verifica si el Hub tiene la contraseña de Kitsu en RAM para esta sesión."""
-        return bool(self._kitsu_email and self._kitsu_password)
-
-    def clear(self) -> None:
+    def cargar_inventario(self) -> dict:
         """
-        Destruye de forma absoluta todas las credenciales de la RAM.
-        Debe ser invocado obligatoriamente por el AuthManager o la UI al cerrar sesión.
+        Lee, procesa y normaliza el manifiesto compartido en el NAS.
+        Garantiza compatibilidad polimórfica de esquemas y auto-sembrado seguro.
         """
-        self._svn_user = ""
-        self._svn_password = ""
-        self._kitsu_email = ""
-        self._kitsu_password = ""
+        self._cached_manifest = {}
+        target_path = self.manifest_path
+
+        # 1. Red de Seguridad: Auto-Sembrado si el estudio es virgen
+        if not target_path.exists():
+            print(f"[VAULT MANAGER] Manifest not found. Initializing seed at: {target_path}")
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            esqueleto_base = {
+                "5.1.2": {
+                    "categories": {
+                        "templates": {
+                            "Macuare_Estudio_Base": {
+                                "version": "1.0",
+                                "description": "Plantilla oficial generada automáticamente",
+                                "mandatory": True,
+                                "requires": []
+                            }
+                        },
+                        "addons": {}
+                    }
+                }
+            }
+            try:
+                self.guardar_inventario(esqueleto_base)
+            except Exception as e:
+                print(f"[VAULT MANAGER ERROR] Critical failure during auto-seeding: {e}")
+
+        # 2. Operación de lectura atómica y parseo elástico
+        if target_path.exists():
+            try:
+                with open(target_path, 'r', encoding='utf-8') as f:
+                    manifesto_crudo = json.load(f)
+                    
+                    for key, val in manifesto_crudo.items():
+                        if isinstance(val, dict):
+                            # Normalización polimórfica de llaves de versión
+                            raw_version = val.get("blender_version") or key
+                            clean_version = str(raw_version).lstrip("vV ")
+                            
+                            # Aislamiento elástico de bloques de categorías
+                            categories_block = val.get("categories") if "categories" in val else val
+                            if isinstance(categories_block, dict):
+                                self._cached_manifest[clean_version] = categories_block
+                                
+            except Exception as e:
+                print(f"[VAULT MANAGER ERROR] Failed to parse vault manifest file: {e}")
+                self._cached_manifest = {}
+
+        return self._cached_manifest
+
+    def guardar_inventario(self, payload: dict) -> bool:
+        """
+        Persiste de forma atómica el estado del manifiesto en el disco compartido del NAS.
+        """
+        try:
+            target_path = self.manifest_path
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(target_path, 'w', encoding='utf-8') as f:
+                json.dump(payload, f, indent=4, ensure_ascii=False)
+            return True
+        except Exception as e:
+            print(f"[VAULT MANAGER ERROR] Failed to write manifest to disk: {e}")
+            return False
+
+    def obtener_datos_locales(self) -> dict:
+        """Devuelve el caché de memoria ram actual sin forzar I/O de disco."""
+        return self._cached_manifest
+
+    # ---------------------------------------------------------
+    # TRANSIENT SESSION LAYER (Backward Compatibility Patch)
+    # ---------------------------------------------------------
+
+    def save_kitsu_credentials(self, email: str, password: str):
+        """Retiene de forma efímera las credenciales de red para uso interno de las vistas."""
+        self._transient_email = email
+        self._transient_password = password
+
+    def clear(self):
+        """Limpia los estados temporales de memoria al cerrar sesión o purgar la app[cite: 4]."""
+        self._transient_email = None
+        self._transient_password = None
+        self._cached_manifest = {}
+        print("[VAULT MANAGER] Transient session states successfully flushed.")

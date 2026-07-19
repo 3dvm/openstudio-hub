@@ -7,14 +7,14 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.7.1
+# Versión del archivo: 0.8.0
 # =========================================================================================
 
 """
 Punto de entrada principal de OpenStudio Hub.
 Inicializa el entorno gráfico nativo en Qt (PySide6), lee la configuración maestra B2B,
 gestiona el enrutamiento base (Login vs Dashboard) e implementa el guardián de procesos.
-Optimizado para Cero-Latencia en el arranque del Dashboard.
+Optimizado para Cero-Latencia en el arranque del Dashboard y enrutamiento PM.
 """
 
 import sys
@@ -33,6 +33,7 @@ from core.config_factory import ConfigFactory
 from ui.view_login import ViewLogin
 from ui.view_artist import ViewArtist
 from ui.view_td import ViewTD
+from ui.view_pm import ViewPM
 
 
 class MacuareHub(QMainWindow):
@@ -40,7 +41,7 @@ class MacuareHub(QMainWindow):
         super().__init__()
 
         # Título base (Se sobrescribe dinámicamente tras el login)
-        self.setWindowTitle(self.tr("OpenStudio Hub - v0.7.1"))
+        self.setWindowTitle(self.tr("OpenStudio Hub - v0.8.0"))
         self.resize(1000, 700) 
         self.setMinimumSize(800, 600)
 
@@ -49,10 +50,10 @@ class MacuareHub(QMainWindow):
 
         # 1. Inicializar los Motores Base
         self.auth = AuthManager()
-        self.vault = VaultManager()
-        
         settings_path = Path("settings.json")
         self.config_factory = ConfigFactory(settings_path)
+        self.vault = VaultManager(self.config_factory)
+        
 
         # 2. Enrutador Inicial (State Machine MVC)
         self.mostrar_login()
@@ -86,7 +87,7 @@ class MacuareHub(QMainWindow):
 
     def mostrar_login(self):
         """Monta la vista de Login en el contenedor central."""
-        self.setWindowTitle(self.tr("OpenStudio Hub - v0.7.1"))
+        self.setWindowTitle(self.tr("OpenStudio Hub - v0.8.0"))
         
         vista_login = ViewLogin(
             parent=self, 
@@ -104,7 +105,7 @@ class MacuareHub(QMainWindow):
         if not studio_name:
             studio_name = "OpenStudio"
             
-        self.setWindowTitle(self.tr("{0} Hub - v0.7.1").format(studio_name))
+        self.setWindowTitle(self.tr("{0} Hub - v0.8.0").format(studio_name))
         
         # Enrutamiento de Vistas (Factory)
         rol = self.auth.get_user_role()
@@ -116,6 +117,15 @@ class MacuareHub(QMainWindow):
                 auth_manager=self.auth, 
                 nextcloud_dir=nextcloud_dir, 
                 vault_manager=self.vault,
+                config_factory=self.config_factory,
+                on_logout=self.ejecutar_logout
+            )
+        elif rol in ["manager", "admin"]:
+            # Función anónima para mapear el status_callback a la barra de estado de QMainWindow
+
+            vista = ViewPM(
+                parent=self,
+                auth_manager=self.auth,
                 config_factory=self.config_factory,
                 on_logout=self.ejecutar_logout
             )

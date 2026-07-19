@@ -7,13 +7,13 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.6.5
+# Versión del archivo: 0.8.0 (CTA Logic Matrix Fix)
 # =========================================================================================
 
 """
-Componente visual reutilizable para las Tarjetas de Tareas (Task Cards).
-Implementa variables de instancia para asegurar la persistencia en memoria
-y evitar fugas de rutas en los callbacks de PySide6.
+Reusable visual component for Task Cards in the Artist Dashboard.
+Uses ConfigFactory to resolve dynamic VFS local directory paths natively.
+Implements a strict priority matrix for Call-To-Action (CTA) rendering.
 """
 
 import webbrowser
@@ -51,16 +51,16 @@ class ThumbnailWorker(QThread):
             if response.status_code == 200:
                 self.image_downloaded.emit(response.content)
             else:
-                self.error_occurred.emit("Thumbnail no encontrado en servidor")
+                self.error_occurred.emit("Thumbnail not found on server")
                 
         except Exception as e:
-            print(f"[UI THUMBNAIL ERROR] Fallo en la descarga: {e}")
-            self.error_occurred.emit("Error de conexión (Thumbnail)")
+            print(f"[UI THUMBNAIL ERROR] Download failed: {e}")
+            self.error_occurred.emit("Network connection error")
 
 
 class TaskCard(QFrame):
     def __init__(self, parent, task_data: dict, project_root: Path, is_installed: bool, 
-                 auth_manager, on_launch_callback, on_install_callback, 
+                 auth_manager, config_factory, on_launch_callback, on_install_callback, 
                  can_work: bool = True, blocked_reason: str = "", **kwargs):
         super().__init__(parent, **kwargs)
         
@@ -68,6 +68,7 @@ class TaskCard(QFrame):
         self.project_root = project_root
         self.is_installed = is_installed
         self.auth_manager = auth_manager
+        self.config_factory = config_factory
         
         self.can_work = can_work
         self.blocked_reason = blocked_reason
@@ -75,15 +76,15 @@ class TaskCard(QFrame):
         self.on_launch_callback = on_launch_callback
         self.on_install_callback = on_install_callback
         
-        # Persistencia en RAM: Guardamos la ruta config como propiedad de la clase
-        if self.project_root:
-            self.config_path = self.project_root / "06_conf_LOCAL" / "project_config.json"
+        if self.project_root and self.config_factory:
+            vfs_local = self.config_factory.get_vfs_local_name()
+            self.config_path = self.project_root / vfs_local / "project_config.json"
         else:
             self.config_path = None
         
         self.setObjectName("FloatingCard")
-        self.setMinimumHeight(350)
-        self.setMinimumWidth(400)
+        self.setMinimumHeight(280)
+        self.setMinimumWidth(380)
 
         self._build_ui()
         self._cargar_miniatura()
@@ -102,10 +103,12 @@ class TaskCard(QFrame):
 
     def _build_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(12)
 
-        # Fila Superior: Título y Badge
+        # ---------------------------------------------------------
+        # Fila Superior: Título de Entidad y Tipo de Tarea
+        # ---------------------------------------------------------
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -115,6 +118,7 @@ class TaskCard(QFrame):
         
         self.title_label = QLabel(title_text)
         self.title_label.setObjectName("H2Title")
+        self.title_label.setStyleSheet("color: #F8FAFC; font-size: 14px; font-weight: bold;")
         header_layout.addWidget(self.title_label)
         header_layout.addStretch()
 
@@ -124,79 +128,91 @@ class TaskCard(QFrame):
         
         self.status_badge = QLabel(status_name.upper())
         self.status_badge.setAlignment(Qt.AlignCenter)
-        self.status_badge.setFixedHeight(24)
+        self.status_badge.setFixedHeight(22)
         self.status_badge.setStyleSheet(f"""
             background-color: {status_color};
             color: {text_color_contraste};
-            border-radius: 12px;
-            font-size: 11px;
+            border-radius: 11px;
+            font-size: 10px;
             font-weight: bold;
-            padding: 0 12px;
+            padding: 0 10px;
         """)
         header_layout.addWidget(self.status_badge)
         main_layout.addLayout(header_layout)
 
+        # ---------------------------------------------------------
         # Fila Central: Thumbnail Cinematográfico
+        # ---------------------------------------------------------
         self.thumb_frame = QFrame(self)
-        self.thumb_frame.setFixedHeight(252)
+        self.thumb_frame.setFixedHeight(160)
         self.thumb_frame.setStyleSheet("background-color: #0B1120; border-radius: 8px;") 
         
         thumb_layout = QVBoxLayout(self.thumb_frame)
-        thumb_layout.setContentsMargins(0, 0, 0, 0)
+        thumb_layout.setContentsMargins(5, 5, 5, 5)
         
-        self.thumb_label = QLabel("Cargando miniatura...")
+        self.thumb_label = QLabel(self.tr("No Thumbnail Available"))
+        self.thumb_label.setObjectName("PlaceholderText")
         self.thumb_label.setAlignment(Qt.AlignCenter)
         self.thumb_label.setStyleSheet("color: #475569; font-style: italic; font-size: 12px;")
         thumb_layout.addWidget(self.thumb_label)
         main_layout.addWidget(self.thumb_frame)
 
-        # Fila Inferior: Botones de Acción
+        # ---------------------------------------------------------
+        # Fila Inferior: Botones de Acción Modulares
+        # ---------------------------------------------------------
         btn_layout = QHBoxLayout()
-        btn_layout.setContentsMargins(0, 5, 0, 0)
-        btn_layout.setSpacing(15)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(12)
 
         task_url = self.task_data.get("task_url")
         if task_url:
-            self.kitsu_btn = QPushButton("Ver en Kitsu ↗")
+            self.kitsu_btn = QPushButton(self.tr("Kitsu ↗"))
             self.kitsu_btn.setObjectName("LinkButton")
-            self.kitsu_btn.setFixedSize(100, 40)
+            self.kitsu_btn.setFixedSize(80, 36)
             self.kitsu_btn.setCursor(Qt.PointingHandCursor)
+            self.kitsu_btn.setStyleSheet("""
+                QPushButton#LinkButton { background-color: #1E293B; color: #94A3B8; border: 1px solid #334155; border-radius: 6px; font-size: 12px; }
+                QPushButton#LinkButton:hover { background-color: #334155; color: #F8FAFC; }
+            """)
             self.kitsu_btn.clicked.connect(lambda checked=False, u=task_url: webbrowser.open(u))
             btn_layout.addWidget(self.kitsu_btn)
 
+        # Matriz Condicional de Renderizado del CTA Primario (Corregida)
         if not self.project_root:
-            self.action_btn = QPushButton("Carpeta Extraviada en NAS")
+            self.action_btn = QPushButton(self.tr("Folder Missing on NAS"))
             self.action_btn.setEnabled(False)
-            self.action_btn.setStyleSheet("QPushButton { border: 2px solid #EF4444; color: #EF4444; background: transparent; border-radius: 8px; font-weight: bold; }")
+            self.action_btn.setStyleSheet("QPushButton { border: 1px solid #EF4444; color: #EF4444; background: transparent; border-radius: 6px; font-weight: bold; font-size: 13px; }")
+        
+        elif not self.can_work:
+            # Prioridad Absoluta: Si está bloqueada, no importa si está instalada o no.
+            msg = self.blocked_reason if self.blocked_reason else self.tr("Access Denied")
+            self.action_btn = QPushButton(f"🔒 {msg}")
+            self.action_btn.setEnabled(False)
+            self.action_btn.setStyleSheet("QPushButton:disabled { border: 1px solid #475569; color: #94A3B8; background: transparent; border-radius: 6px; font-weight: bold; font-size: 13px; }")
+        
         elif self.is_installed:
-            if self.can_work:
-                self.action_btn = QPushButton("Work on Task / Launch Blender")
-                self.action_btn.setCursor(Qt.PointingHandCursor)
-                self.action_btn.setStyleSheet("""
-                    QPushButton { border: 1px solid #10B981; color: #10B981; background: transparent; border-radius: 8px; font-weight: bold; font-size: 14px; }
-                    QPushButton:hover { background-color: rgba(16, 185, 129, 0.1); }
-                """)
-                # Callback blindado con variables de clase
-                self.action_btn.clicked.connect(
-                    lambda checked=False: self.on_launch_callback(self.project_root, self.config_path, self.task_data)
-                )
-            else:
-                msg = self.blocked_reason if self.blocked_reason else "Acceso Denegado"
-                self.action_btn = QPushButton(f"🔒 {msg}")
-                self.action_btn.setEnabled(False)
-                self.action_btn.setStyleSheet("QPushButton:disabled { border: 1px solid #475569; color: #94A3B8; background: transparent; border-radius: 8px; font-weight: bold; font-size: 14px; }")
-        else:
-            self.action_btn = QPushButton("Install Project Locally")
+            self.action_btn = QPushButton(self.tr("Launch Project Environment"))
             self.action_btn.setCursor(Qt.PointingHandCursor)
             self.action_btn.setStyleSheet("""
-                QPushButton { border: 1px solid #F59E0B; color: #F59E0B; background: transparent; border-radius: 8px; font-weight: bold; font-size: 14px; }
+                QPushButton { border: 1px solid #10B981; color: #10B981; background: transparent; border-radius: 6px; font-weight: bold; font-size: 13px; }
+                QPushButton:hover { background-color: rgba(16, 185, 129, 0.1); }
+            """)
+            self.action_btn.clicked.connect(
+                lambda checked=False: self.on_launch_callback(self.project_root, self.config_path, self.task_data)
+            )
+        
+        else:
+            self.action_btn = QPushButton(self.tr("Install Project Locally"))
+            self.action_btn.setCursor(Qt.PointingHandCursor)
+            self.action_btn.setStyleSheet("""
+                QPushButton { border: 1px solid #F59E0B; color: #F59E0B; background: transparent; border-radius: 6px; font-weight: bold; font-size: 13px; }
                 QPushButton:hover { background-color: rgba(245, 158, 11, 0.1); }
             """)
             self.action_btn.clicked.connect(
                 lambda checked=False: self.on_install_callback(self.project_root, self.task_data)
             )
 
-        self.action_btn.setFixedHeight(40)
+        self.action_btn.setFixedHeight(36)
         self.action_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         btn_layout.addWidget(self.action_btn)
 
@@ -221,7 +237,10 @@ class TaskCard(QFrame):
             self.thumb_label.setPixmap(pixmap)
             self.thumb_label.setText("") 
         else:
-            self._on_thumbnail_error("Archivo de imagen corrupto")
+            self._on_thumbnail_error(self.tr("Corrupted image format"))
 
     def _on_thumbnail_error(self, message: str):
-        self.thumb_label.setText(message)
+        if "No Thumbnail" in message or "not found" in message:
+            self.thumb_label.setText(self.tr("No Thumbnail Available"))
+        else:
+            self.thumb_label.setText(message)
