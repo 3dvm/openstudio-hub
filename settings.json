@@ -1,32 +1,32 @@
 {
     "studio_profile": {
-        "name": "Macuare Estudio"
+        "name": "Kitsu"
     },
     "vcs_engine": {
         "local_workspace_root": {
-            "windows": "/home/macuare/Nextcloud/Macuare-Estudio-Archivos/01_PROYECTOS_ESTUDIO",
-            "linux": "/home/macuare/Nextcloud/Macuare-Estudio-Archivos/01_PROYECTOS_ESTUDIO",
-            "macos": "/home/macuare/Nextcloud/Macuare-Estudio-Archivos/01_PROYECTOS_ESTUDIO"
+            "windows": "/home/macuare/openstudio_projects",
+            "linux": "/home/macuare/openstudio_projects",
+            "macos": "/home/macuare/openstudio_projects"
         },
         "active_adapter": "svn",
         "enable_vendor_sparse_checkout": true,
         "repository_url": "svn://localhost"
     },
     "kitsu_production": {
-        "api_url": "https://proyectos.macuare.com.ve"
+        "api_url": "http://localhost:8080"
     },
     "macuare_services": {},
     "project_topography": {
-        "vfs_svn": "02_archivos_de_produccion",
-        "vfs_shared": "04_datos_compartidos",
-        "vfs_local": "06_conf_LOCAL",
-        "vfs_pipeline": "05_config_estudio",
+        "vfs_svn": "svn",
+        "vfs_shared": "shared",
+        "vfs_local": "local",
+        "vfs_pipeline": "pipeline",
         "custom_dirs": [
-            "01_Brief_y_Refs",
-            "03_render"
+            "refs",
+            "renders"
         ]
     },
     "infrastructure_topology": {
-        "vault_path": "/home/macuare/Nextcloud/Macuare-Estudio-Archivos/04_BIBLIOTECA_ASSETS/openstudio_vault"
+        "vault_path": "/home/macuare/openstudio_projects/openstudio_vault"
     }
 }

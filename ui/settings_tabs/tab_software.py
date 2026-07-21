@@ -312,24 +312,61 @@ class TabSoftware(QWidget):
         if not version:
             return
 
-        vault_root = self.vault_manager.manifest_path.parent
-        templates_target_dir = vault_root / "project_templates"
+        # Extraemos la ruta física de la Bóveda de forma dinámica pero segura
+        vault_root = self.vault_manager.config_factory.get_vault_path()
 
         self.btn_fetch_studio_tools.setEnabled(False)
+        self.progress_bar.setValue(0)
+        self.progress_bar.show()
 
-        self._fetch_worker = StudioToolsFetchWorker(version, templates_target_dir)
-        self._fetch_worker.status.connect(self.status_callback)
-        self._fetch_worker.finished.connect(self._on_studio_tools_finished)
+        # Usamos el worker encapsulado inyectándole la ruta y la versión. 
+        self._fetch_worker = StudioToolsFetchWorker(vault_root, version)
+        
+        # Conectamos las señales 
+        self._fetch_worker.status_update.connect(self.status_callback)
+        self._fetch_worker.progress_updated.connect(self.progress_bar.setValue) 
+        self._fetch_worker.finished_packing.connect(self._on_studio_tools_finished)
+        self._fetch_worker.error_occurred.connect(self._on_studio_tools_error)
+        
+        # EL SECRETO DE QT: Usar la señal nativa 'finished' para la limpieza
+        self._fetch_worker.finished.connect(self._cleanup_fetch_worker)
+        
         self._fetch_worker.start()
 
-    def _on_studio_tools_finished(self, exito: bool, herramientas: dict):
+    def _on_studio_tools_finished(self, herramientas_nuevas: dict):
+        """Se ejecuta cuando el hilo de descarga e instalación termina con éxito."""
         self.btn_fetch_studio_tools.setEnabled(True)
-        if exito and herramientas:
-            version_activa = self.combo_versions.currentText()
-            self.manifest_data[version_activa].update(herramientas)
-            self._redibujar_arbol_componentes()
-            self._on_field_modified()
-            
+        self.progress_bar.hide()
+
+        version_activa = self.combo_versions.currentText()
+        
+        # 1. Como el Worker guardó los add-ons físicamente en el disco (NAS),
+        # obligamos al VaultManager a recargar el archivo JSON para sincronizar la RAM.
+        #inventario_actualizado = self.vault_manager.cargar_inventario()
+        #if inventario_actualizado:
+        #    self.cargar_datos(inventario_actualizado)
+        
+        if version_activa and version_activa in self.manifest_data:
+            if "addons" not in self.manifest_data[version_activa]:
+                self.manifest_data[version_activa]["addons"] = {}
+
+            self.manifest_data[version_activa]["addons"].update(herramientas_nuevas)
+
+        # 2. Disparamos la señal de modificación para que el Orquestador principal 
+        # ilumine el botón de "Guardar Cambios" y el usuario sepa que hay data nueva.
+        self._redibujar_arbol_componentes()
+        self._on_field_modified()
+        # NOTA: ¡Ya no destruimos el hilo aquí!
+
+    def _on_studio_tools_error(self, error: str):
+        """Se ejecuta si el worker reporta un fallo de red o validación."""
+        self.btn_fetch_studio_tools.setEnabled(True)
+        self.progress_bar.hide()
+        self.status_callback(self.tr("Studio Tools Fetch Failed: {0}").format(error), "red")
+        # NOTA: ¡Ya no destruimos el hilo aquí!
+
+    def _cleanup_fetch_worker(self):
+        """Destruye el hilo de forma segura SOLO cuando su método run() ha terminado por completo."""
         if self._fetch_worker:
             self._fetch_worker.deleteLater()
             self._fetch_worker = None

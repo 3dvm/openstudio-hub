@@ -14,11 +14,15 @@ import shutil
 import tempfile
 import urllib.request
 import zipfile
+import os
+
 from pathlib import Path
 from html.parser import HTMLParser
 from PySide6.QtCore import Signal, QThread
 
 from core.addon_inspector import AddonInspector
+from core.manifest_manager import ManifestManager
+from core.addon_parser import AddonParser
 
 class ApacheIndexParser(HTMLParser):
     def __init__(self):
@@ -127,81 +131,133 @@ class BlenderDirectDownloadWorker(QThread):
             self.finished.emit(False, "")
 
 class StudioToolsFetchWorker(QThread):
-    status = Signal(str, str)
-    finished = Signal(bool, dict)
+    """
+    Descarga la release oficial de Studio Tools, detecta las carpetas internas,
+    las re-empaqueta en archivos .zip dinámicamente según la barrera de Blender 4.2,
+    y registra los add-ons compatibles en la bóveda.
+    """
+    progress_updated = Signal(int)
+    status_update = Signal(str, str)
+    finished_packing = Signal(dict) 
+    error_occurred = Signal(str)
 
-    def __init__(self, version: str, target_templates_dir: Path):
+    def __init__(self, vault_root: Path, current_version: str):
         super().__init__()
-        self.version = version
-        self.target_templates_dir = target_templates_dir
+        self.vault_root = vault_root
+        self.current_version = current_version
+        self.url = "https://projects.blender.org/studio/blender-studio-tools/releases/download/latest/blender_studio_add-ons_latest.zip"
 
     def run(self):
+        # 0. Instanciamos el manager de forma segura, asilado dentro de este hilo
+        from core.manifest_manager import ManifestManager
+        self.manifest_manager = ManifestManager(self.vault_root)
+
+        temp_dir = Path(tempfile.mkdtemp())
+        master_zip_path = temp_dir / "blender_studio_add-ons_latest.zip"
+        
         try:
-            url = "https://projects.blender.org/studio/blender-studio-tools/archive/main.zip"
-            vault_root = self.target_templates_dir.parent
-            addons_dir = vault_root / "addons"
+            # 1. Descarga del Release ZIP usando urllib.request nativo
+            # (Mantén exactamente el mismo bloque try/except que tenías para la descarga, 
+            # extracción y re-empaquetado dual de la iteración anterior)
+            
+            self.status_update.emit("Descargando release oficial de Studio Tools...", "yellow")
+            import urllib.request
+            req = urllib.request.Request(self.url, headers={'User-Agent': 'OpenStudioHub/1.0'})
+            
+            with urllib.request.urlopen(req, timeout=30) as response:
+                total_size = int(response.info().get('Content-Length', 0))
+                downloaded = 0
+                with open(master_zip_path, 'wb') as f:
+                    while True:
+                        chunk = response.read(8192)
+                        if not chunk: break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            self.progress_updated.emit(int((downloaded / total_size) * 30))
+                            
+            self.status_update.emit("Extrayendo master branch...", "yellow")
+            
+            # 2. Extracción del Master ZIP
+            extract_dir = temp_dir / "extracted"
+            extract_dir.mkdir()
+            with zipfile.ZipFile(master_zip_path, 'r') as zf:
+                zf.extractall(extract_dir)
+                
+            # 3. Ubicar el directorio raíz de los add-ons (manejando la subcarpeta de Gitea)
+            addons_root = extract_dir
+            subdirs = [d for d in addons_root.iterdir() if d.is_dir()]
+            if len(subdirs) == 1 and "blender_studio_add-ons" in subdirs[0].name:
+                addons_root = subdirs[0]
+
+            addon_dirs = [d for d in addons_root.iterdir() if d.is_dir() and ((d / "blender_manifest.toml").exists() or (d / "__init__.py").exists())]
+            
+            if not addon_dirs:
+                raise ValueError("No se encontraron directorios de add-ons válidos en la release.")
+                
+            total_addons = len(addon_dirs)
+            registered_count = 0
+            
+            # 2. Creamos un diccionario para acumular lo que logramos registrar
+            nuevos_addons_ram = {}
+            import os
+
+            addons_dir =self.vault_root / "addons"
             addons_dir.mkdir(parents=True, exist_ok=True)
 
-            herramientas_auto = {
-                "templates": {
-                    "Macuare_Estudio_Official": {
-                        "version": "1.4.2",
-                        "description": "Plantilla corporativa auto-generada",
-                        "mandatory": True,
-                        "requires": []
-                    }
-                },
-                "addons": {}
-            }
-
-            with tempfile.TemporaryDirectory() as tmpdir:
-                zip_path = Path(tmpdir) / "studio_tools.zip"
-                req = urllib.request.Request(url, headers={'User-Agent': 'OpenStudioHub/1.0'})
+            for i, addon_dir in enumerate(addon_dirs):
+                self.status_update.emit(f"Empaquetando y validando {addon_dir.name}...", "yellow")
+                addon_zip_path = temp_dir / f"{addon_dir.name}.zip"
                 
-                with urllib.request.urlopen(req) as response, open(zip_path, 'wb') as out_file:
-                    shutil.copyfileobj(response, out_file)
-
-                self.status.emit("Extracting and compressing compatible Addons...", "yellow")
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(tmpdir)
-
-                extracted_root = Path(tmpdir) / "blender-studio-tools"
+                # Barrera Blender 4.2+: Las extensiones exigen el manifiesto en la raíz absoluta del ZIP.
+                # Legacy (<4.2): Los add-ons clásicos exigen estar contenidos en una subcarpeta.
+                is_extension = (addon_dir / "blender_manifest.toml").exists()
                 
-                # Encontrar todos los directorios que parezcan addons (tienen toml o init)
-                addon_dirs = []
-                for manifest_path in extracted_root.rglob("blender_manifest.toml"):
-                    addon_dirs.append(manifest_path.parent)
-                for init_path in extracted_root.rglob("__init__.py"):
-                    if init_path.parent not in addon_dirs:
-                        addon_dirs.append(init_path.parent)
+                with zipfile.ZipFile(addon_zip_path, 'w', zipfile.ZIP_DEFLATED) as out_zf:
+                    for root, _, files in os.walk(addon_dir):
+                        for file in files:
+                            file_path = Path(root) / file
+                            arcname = file_path.relative_to(addon_dir) if is_extension else file_path.relative_to(addon_dir.parent)
+                            out_zf.write(file_path, arcname)
+                
+                # Validación y Registro en la Bóveda
+                parsed = AddonParser.parse_zip(addon_zip_path)
+                if parsed["is_valid"]:
+                    if AddonParser.is_compatible(parsed["min_blender_version"], self.current_version):
+                        addon_name_parsed = parsed["name"]
+                        addon_ver_parsed = parsed["version"]
 
-                for addon_dir in addon_dirs:
-                    meta = AddonInspector.inspect_directory(addon_dir)
-                    if not meta or meta["name"] == "unknown_addon":
-                        continue
-                    
-                    if AddonInspector.is_compatible(meta["blender_min"], self.version):
-                        addon_name = meta["name"]
-                        addon_ver = meta["version"]
-                        desc = meta["description"]
-                        
-                        target_zip_name = f"{addon_name}-{addon_ver}.zip"
+                        target_zip_name = f"{addon_name_parsed}-{addon_ver_parsed}.zip"
                         target_zip_path = addons_dir / target_zip_name
-                        
-                        # Inteligencia de Caché + Compresión
-                        if not target_zip_path.exists():
-                            shutil.make_archive(str(addons_dir / f"{addon_name}-{addon_ver}"), 'zip', root_dir=addon_dir.parent, base_dir=addon_dir.name)
-                        
-                        herramientas_auto["addons"][addon_name] = {
-                            "version": addon_ver,
-                            "description": desc[:60] + "..." if len(desc) > 60 else desc,
-                            "mandatory": False,
-                            "requires": []
-                        }
+                        shutil.copy2(addon_zip_path, target_zip_path)
 
-            self.status.emit("✓ Pipeline tools packaged as ZIPs successfully.", "green")
-            self.finished.emit(True, herramientas_auto)
-
+                        exito, msg = self.manifest_manager.register_addon(
+                            blender_version=self.current_version,
+                            addon_name=addon_name_parsed,
+                            addon_version=addon_ver_parsed,
+                            source_zip=target_zip_path
+                        )
+                        if exito:
+                            registered_count += 1
+                            # 3. Guardamos los datos con la misma estructura que usa TabSoftware
+                            desc = parsed.get("description", "Blender Studio Tool")
+                            nuevos_addons_ram[addon_name_parsed] = {
+                                "version": addon_ver_parsed,
+                                "description": desc[:60] + "..." if len(desc) > 60 else desc,
+                                "mandatory": False,
+                                "requires": []
+                            }
+                            
+                self.progress_updated.emit(30 + int(((i + 1) / total_addons) * 70))
+                
+            self.status_update.emit(f"✓ Studio Tools Auto-Fetch completado. {registered_count} add-ons registrados.", "green")
+            
+            # 4. Emitimos la señal entregando el diccionario a la interfaz
+            self.finished_packing.emit(nuevos_addons_ram)
+            
         except Exception as e:
-            self.status.emit(f"✗ Studio Tools deployment failure: {str(e)}", "red")
-            self.finished.emit(False, {})
+            import traceback
+            print(f"[StudioToolsFetchWorker] ERROR: {traceback.format_exc()}")
+            self.error_occurred.emit(str(e))
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)

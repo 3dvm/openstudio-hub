@@ -7,15 +7,17 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 1.0.1 (Session State & Clear Patch)
+# Versión del archivo: 1.1.0 (Environment Variables Injection)
 # =========================================================================================
 
 """
 Centralized CRUD manager for the vault_manifest.json shared inventory file.
 Acts as the Single Source of Truth for software availability, templates, and addons.
-Implements robust polymorphic parsing and retains transient credentials compatibility.
+Implements robust polymorphic parsing and retains transient credentials compatibility,
+injecting them into the OS environment for headless subprocesses.
 """
 
+import os
 import json
 from pathlib import Path
 
@@ -116,13 +118,22 @@ class VaultManager:
     # ---------------------------------------------------------
 
     def save_kitsu_credentials(self, email: str, password: str):
-        """Retiene de forma efímera las credenciales de red para uso interno de las vistas."""
+        """Retiene de forma efímera las credenciales de red e inyecta al ambiente del OS."""
         self._transient_email = email
         self._transient_password = password
+        
+        # Inyectar al entorno para que los subprocesos (ProjectBuilder) puedan consumirlo
+        os.environ["OPENSTUDIO_KITSU_USER"] = email
+        os.environ["OPENSTUDIO_KITSU_PWD"] = password
 
     def clear(self):
-        """Limpia los estados temporales de memoria al cerrar sesión o purgar la app[cite: 4]."""
+        """Limpia los estados temporales de memoria al cerrar sesión o purgar la app."""
         self._transient_email = None
         self._transient_password = None
         self._cached_manifest = {}
+        
+        # Purgar el entorno por seguridad
+        os.environ.pop("OPENSTUDIO_KITSU_USER", None)
+        os.environ.pop("OPENSTUDIO_KITSU_PWD", None)
+        
         print("[VAULT MANAGER] Transient session states successfully flushed.")

@@ -7,14 +7,14 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 1.2.0 (NAS Data Directory Pipeline)
+# Versión del archivo: 1.3.0 (Auto-Refresh & Reload Hooks)
 # =========================================================================================
 
 """
 Componente independiente para la Lista de Proyectos del TD.
 Encapsula la lógica de cuadrícula responsiva, extracción de datos vía Kitsu
 y el botón de creación de nuevos proyectos.
-Ahora inyecta la ruta de Nextcloud (NAS) a las tarjetas para permitir lecturas dinámicas.
+Integra ganchos (hooks) de auto-recarga tras operaciones destructivas.
 """
 
 from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QGridLayout, 
@@ -72,13 +72,20 @@ class ProjectListWidget(QFrame):
         content_layout.setSpacing(20)
 
         # ---------------------------------------------------------
-        # HERO ACTION (Botón Crear Proyecto Equilibrado)
+        # HERO ACTION (Botones de Cabecera)
         # ---------------------------------------------------------
         hero_layout = QHBoxLayout()
         hero_layout.setContentsMargins(0, 0, 0, 0)
         
-        # El stretch empuja el botón a la derecha para no ocupar todo el ancho
+        # El stretch empuja los botones a la derecha para no ocupar todo el ancho
         hero_layout.addStretch()
+        
+        self.btn_refrescar = QPushButton(self.tr("🔄 Refresh List"))
+        self.btn_refrescar.setObjectName("SecondaryButton")
+        self.btn_refrescar.setFixedSize(150, 40)
+        self.btn_refrescar.setCursor(Qt.PointingHandCursor)
+        self.btn_refrescar.clicked.connect(self.cargar_proyectos)
+        hero_layout.addWidget(self.btn_refrescar)
         
         self.btn_nuevo_proy = QPushButton(self.tr("+ Create New Project"))
         self.btn_nuevo_proy.setObjectName("PrimaryButton") 
@@ -173,12 +180,12 @@ class ProjectListWidget(QFrame):
         
         for project_data in proyectos:
             if ProjectCard:
-                # Inyección estratégica del path raíz de almacenamiento local/NAS hacia el componente hijo
                 tarjeta = ProjectCard(
                     parent=self.grid_widget,
                     project_data=project_data,
                     auth_manager=self.auth,
-                    nextcloud_dir=self.nextcloud_dir
+                    nextcloud_dir=self.nextcloud_dir,
+                    on_rebuild_callback=self.cargar_proyectos  # Inyección del Hook de recarga
                 )
             else:
                 tarjeta = QLabel(f"📦 {project_data.get('name', 'Unknown')}")

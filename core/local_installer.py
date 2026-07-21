@@ -7,7 +7,7 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.8.0
+# Versión del archivo: 0.9.0 (Dynamic Addon Resolution)
 # =========================================================================================
 
 """
@@ -26,7 +26,7 @@ import os
 from pathlib import Path
 from typing import Tuple, Dict, Optional, Any
 
-from .vcs_router import VCSRouter
+from core.vcs_router import VCSRouter
 from core.sparse_manager import SparseManager
 
 class LocalInstaller:
@@ -46,10 +46,6 @@ class LocalInstaller:
         self.boveda_templates = self.vault_root / "project_templates"
 
     def verificar_instalacion(self, project_root: Path) -> bool:
-        """
-        Verifies if the project has been fully deployed on the local machine.
-        Checks for the localized project_config.json and the VCS tracking folder.
-        """
         vfs_local = self.config_factory.get_vfs_local_name()
         vfs_svn = self.config_factory.get_vfs_svn_name()
         
@@ -67,7 +63,6 @@ class LocalInstaller:
             return "macos", "dmg"
 
     def _instalar_blender(self, project_root: Path, vfs_local: str, version: str, status_callback):
-        """Locates the binary in the vault and extracts it to the isolated local sandbox."""
         os_name, ext = self._get_os_info()
         archive_name = f"blender-{version}-{os_name}-x64.{ext}"
         archive_path = self.boveda_blender / archive_name
@@ -97,7 +92,6 @@ class LocalInstaller:
 
     def _gestionar_vcs(self, project_root: Path, vfs_svn: str, vcs_user: str, vcs_pwd: str, 
                        status_callback, user_role: str, task_metadata: Optional[Dict[str, str]]) -> bool:
-        """RBAC Bifurcator: Evaluates user role and orchestrates cloning (Full vs Sparse)."""
         vcs_root = project_root / vfs_svn
         vcs_type = self.config_factory.get_vcs_adapter_type()
         
@@ -107,14 +101,12 @@ class LocalInstaller:
         router = VCSRouter(vcs_type=vcs_type, repo_url=final_repo_url, workspace_dir=vcs_root)
         is_sparse_enabled = getattr(self.config_factory, 'is_vendor_sparse_enabled', lambda: True)()
         
-        # === JAILING FORK (Vendors) ===
         if user_role == "vendor" and is_sparse_enabled:
             status_callback("Initializing Sparse Checkout (Jailing Mode)...", "yellow")
             sparse_manager = SparseManager(vcs_router=router, status_callback=status_callback)
             success = sparse_manager.setup_vendor_workspace(task_metadata, vcs_user, vcs_pwd)
             return success
         
-        # === FULL CHECKOUT (Staff: Artists, Leads, TDs) ===
         adapter = router.get_adapter()
         status_callback(f"Synchronizing Full Workspace with {vcs_type.upper()}...", "yellow")
         
@@ -129,10 +121,6 @@ class LocalInstaller:
 
     def instalar_entorno(self, project_root: Path, vcs_user: str, vcs_pwd: str, status_callback,
                          user_role: str = "artist", task_metadata: Optional[Dict[str, str]] = None) -> Tuple[bool, str]:
-        """
-        Executes sequential local deployment of the artist's sandbox.
-        """
-        # Fetch Topography keys
         vfs_svn = self.config_factory.get_vfs_svn_name()
         vfs_local = self.config_factory.get_vfs_local_name()
         vfs_pipe = self.config_factory.get_vfs_pipeline_name()
@@ -142,7 +130,6 @@ class LocalInstaller:
         init_json_path = project_root / vfs_pipe / "project_init.json"
 
         try:
-            # 1. Pipeline Verification (NAS Synced Data)
             if not init_json_path.exists():
                 return False, f"Critical: project_init.json not found in {vfs_pipe}/. Make sure the NAS is fully synced."
 
@@ -155,29 +142,23 @@ class LocalInstaller:
             dependencies = init_data.get("dependencies", {})
             template_name = init_data.get("template", "")
 
-            # 2. VCS Synchronization (SVN / Git LFS)
             checkout_ok = self._gestionar_vcs(
                 project_root, vfs_svn, vcs_user, vcs_pwd, status_callback, user_role, task_metadata
             )
             if not checkout_ok:
                 return False, "VCS Synchronization aborted."
 
-            # 3. Isolated Blender Installation
             self._instalar_blender(project_root, vfs_local, blender_version, status_callback)
 
-            # 4. Master Template Injection
             if template_name:
                 self._instalar_template(project_root, vfs_local, template_name, blender_version, status_callback)
 
-            # 5. Add-ons & Extensions (Parsed from Manifest schema)
             status_callback("Deploying project extensions...", "yellow")
             self._sincronizar_addons(project_root, vfs_local, dependencies, status_callback)
             
-            # 6. VFS Symlink Mapping
             status_callback("Configuring production VFS symlinks...", "yellow")
             self._crear_symlinks(project_path=project_root, vfs_svn=vfs_svn, vfs_shared=vfs_shared)
 
-            # 7. Local Configuration Persistence (ADN)
             status_callback("Generating local workspace configuration...", "yellow")
             config_local_dir = project_root / vfs_local
             config_local_dir.mkdir(exist_ok=True)
@@ -207,28 +188,39 @@ class LocalInstaller:
             return False, f"Critical error during local installation: {str(e)}"
 
     def _sincronizar_addons(self, project_root: Path, vfs_local: str, dependencies: dict, status_callback):
-        """Extracts add-ons parsing the manifest list format injected by ProjectBuilder."""
+        """
+        Extrae add-ons parseando el contrato de dependencias inyectado por ProjectBuilder.
+        Resuelve las rutas de los .zip dinámicamente escaneando la bóveda local del usuario.
+        """
         extensions_dir = project_root / vfs_local / "blender_data" / "extensions" / "user_default"
         extensions_dir.mkdir(parents=True, exist_ok=True)
 
-        addons_list = dependencies.get("addons", [])
+        # Blindaje por si las dependencias fueron serializadas como string
+        if isinstance(dependencies, str):
+            try:
+                dependencies = json.loads(dependencies)
+            except Exception:
+                dependencies = {}
+
+        addons_dict = dependencies.get("addons", {})
         
-        for addon in addons_list:
-            addon_name = addon.get("name", "Unknown")
-            addon_version = addon.get("version", "?.?")
-            addon_rel_path = addon.get("path", "")
+        for addon_name, addon_version in addons_dict.items():
+            status_callback(f"Buscando extensión: {addon_name} (v{addon_version})...", "yellow")
             
-            if not addon_rel_path:
-                continue
+            # Búsqueda dinámica en la bóveda local de esta computadora
+            origen_addon_zip = None
+            if self.boveda_addons.exists():
+                for archivo in self.boveda_addons.rglob("*.zip"):
+                    if addon_name.lower() in archivo.name.lower():
+                        origen_addon_zip = archivo
+                        break
 
-            origen_addon_zip = self.vault_root / addon_rel_path
-            # Normalize folder name
-            safe_folder_name = addon_name.replace(" ", "_").lower()
-            destino_addon = extensions_dir / safe_folder_name
+            if origen_addon_zip and origen_addon_zip.exists():
+                safe_folder_name = addon_name.replace(" ", "_").lower()
+                destino_addon = extensions_dir / safe_folder_name
 
-            if origen_addon_zip.exists():
                 if not destino_addon.exists():
-                    status_callback(f"Deploying extension: {addon_name} (v{addon_version})...", "yellow")
+                    status_callback(f"Desplegando extensión: {addon_name}...", "yellow")
                     destino_addon.mkdir(parents=True, exist_ok=True)
                     try:
                         with zipfile.ZipFile(origen_addon_zip, 'r') as zip_ref:
@@ -236,10 +228,9 @@ class LocalInstaller:
                     except zipfile.BadZipFile:
                         status_callback(f"Error: Archive {origen_addon_zip.name} is corrupted.", "red")
             else:
-                status_callback(f"Warning: Extension {origen_addon_zip.name} not found in Vault.", "red")
+                status_callback(f"Warning: Extension '{addon_name}' not found in Vault.", "red")
 
     def _crear_symlinks(self, project_path: Path, vfs_svn: str, vfs_shared: str):
-        """Maps ephemeral NAS directories (shared) into the VCS active workspace without tracking them."""
         shared_edit_dir = project_path / vfs_shared / "editorial"
         svn_edit_dir = project_path / vfs_svn / "edit"
         svn_edit_dir.mkdir(parents=True, exist_ok=True)

@@ -7,15 +7,8 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.8.4 (Compressed Headless Execution)
+# Versión del archivo: 1.6.1 (Restauración de Headless Builder)
 # =========================================================================================
-
-"""
-Isolated Input/Output (I/O) operations engine.
-Scaffolds the studio's directory tree on the NAS based on Semantic Topography mapping.
-Copies master templates, generates project_init.json payloads, and executes 
-Headless Blender initialization. Fully bound to dynamic ConfigFactory states.
-"""
 
 import os
 import json
@@ -28,6 +21,7 @@ import platform
 from pathlib import Path
 
 from core.vcs_router import VCSRouter
+from core.kitsu_manager import KitsuManager
 
 class ProjectBuilder:
     def __init__(self, config_factory):
@@ -65,6 +59,15 @@ class ProjectBuilder:
         if project_path.exists():
             return False, f"Folder '{folder_name}' already exists on the NAS."
 
+        kitsu = KitsuManager()
+        success, kitsu_msg, kitsu_project = kitsu.create_project(project_name.strip())
+        
+        if not success:
+            return False, f"Abortado por Kitsu: {kitsu_msg}"
+            
+        project_id = kitsu_project.get("id", "")
+        print(f"[ProjectBuilder] Entidad Kitsu forjada con éxito. ID: {project_id}")
+
         try:
             vfs_svn = self.config_factory.get_vfs_svn_name()
             vfs_shared = self.config_factory.get_vfs_shared_name()
@@ -93,6 +96,7 @@ class ProjectBuilder:
 
             payload_data = {
                 "project_name": project_name.strip(),
+                "kitsu_project_id": project_id,
                 "blender_version": blender_version.strip(),
                 "template": project_template.strip(),
                 "dependencies": dependencies,
@@ -110,22 +114,21 @@ class ProjectBuilder:
                 splash_source = Path(splash_image_path)
                 if splash_source.exists() and splash_source.is_file():
                     shutil.copy(splash_source, project_path / vfs_pipe / "splash.png")
+                    kitsu.upload_project_splash(project_id, splash_image_path)
 
-            self._inicializar_shot_builder(blender_version, project_path, vfs_pipe)
+            kitsu_user = os.environ.get("OPENSTUDIO_KITSU_USER", "")
+            kitsu_pwd = os.environ.get("OPENSTUDIO_KITSU_PWD", "")
+            
+            self._inicializar_shot_builder(blender_version, project_path, vfs_svn, vfs_local, project_id, kitsu_user, kitsu_pwd, dependencies)
 
-            # -------------------------------------------------------------------------------------
-            # 7.5 AUTO-PROVISIONAMIENTO DEL REPOSITORIO (DEMO DOCKER)
-            # -------------------------------------------------------------------------------------
             base_repo_url = self.config_factory.get_vcs_repository_url()
             
             if "localhost" in base_repo_url:
-                # Override hardcoded de credenciales para el entorno local (Demo)
                 vcs_user = "admin"
                 vcs_pwd = "admin123"
                 
                 try:
-                    print(f"[ProjectBuilder] Provisioning local SVN repo: {folder_name} inside Docker...")
-                    subprocess.run(["docker", "exec", "openstudio_local_svn", "svnadmin", "create", f"/home/svn/{folder_name}"], check=True)
+                    subprocess.run(["docker", "exec", "openstudio_local_svn", "svnadmin", "create", f"/home/svn/{folder_name}"], check=True, capture_output=True)
                     
                     conf_cmd = (
                         f"echo '[general]' > /home/svn/{folder_name}/conf/svnserve.conf && "
@@ -133,20 +136,16 @@ class ProjectBuilder:
                         f"echo 'auth-access = write' >> /home/svn/{folder_name}/conf/svnserve.conf && "
                         f"echo 'password-db = passwd' >> /home/svn/{folder_name}/conf/svnserve.conf"
                     )
-                    subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", conf_cmd], check=True)
+                    subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", conf_cmd], check=True, capture_output=True)
                     
-                    # Credenciales inyectadas de forma estática en el contenedor
                     pwd_cmd = f"echo '[users]' > /home/svn/{folder_name}/conf/passwd && echo 'admin = admin123' >> /home/svn/{folder_name}/conf/passwd"
-                    subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", pwd_cmd], check=True)
+                    subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", pwd_cmd], check=True, capture_output=True)
                     
                     mkdir_cmd = f"svn mkdir file:///home/svn/{folder_name}/{vfs_svn} -m 'Init Hub Topology'"
-                    subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", mkdir_cmd], check=True)
+                    subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", mkdir_cmd], check=True, capture_output=True)
                 except Exception as e:
-                    print(f"[ProjectBuilder] WARNING: Failed to provision Docker SVN (might already exist): {e}")
+                    print(f"[ProjectBuilder] WARNING: Failed Docker SVN setup: {e}")
 
-            # -------------------------------------------------------------------------------------
-            # 8. VCS COMMIT INICIAL
-            # -------------------------------------------------------------------------------------
             try:
                 vcs_type = self.config_factory.get_vcs_adapter_type()
                 final_repo_url = f"{base_repo_url}/{folder_name}/{vfs_svn}" if "localhost" in base_repo_url else f"{base_repo_url}/{folder_name}/{vfs_svn}"
@@ -156,17 +155,17 @@ class ProjectBuilder:
                 adapter = router.get_adapter()
                 
                 if vcs_user and vcs_pwd:
-                    # 1. Enlazar la carpeta local con el servidor SVN (.svn)
                     adapter.full_pull(username=vcs_user, password=vcs_pwd)
-                    
-                    # 2. Registrar TODOS los archivos y plantillas nuevas en el radar de SVN
                     print("[ProjectBuilder] Registering untracked files to VCS...")
-                    subprocess.run(["svn", "add", "--force", str(vcs_root)], check=False, capture_output=True)
                     
-                    # 3. Subir el Blueprint oficial
+                    if hasattr(adapter, '_run_subprocess'):
+                        adapter._run_subprocess(["svn", "add", "--force", "."], cwd=vcs_root)
+                    else:
+                        subprocess.run(["svn", "add", "--force", "."], cwd=vcs_root, check=False, capture_output=True)
+                        
                     adapter.commit(
-                        message="Initial commit: Hub Project Blueprint (project_init.json)", 
-                        paths=[str(payload_file_svn)], 
+                        message="Initial commit: Hub Project Blueprint and Edit Master", 
+                        paths=["."], 
                         username=vcs_user, 
                         password=vcs_pwd
                     )
@@ -178,17 +177,68 @@ class ProjectBuilder:
             return True, f"Project '{folder_name}' successfully generated."
 
         except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            print(f"\n[ProjectBuilder] CRASH FATAL (Stacktrace):\n{error_trace}\n")
             return False, f"System error creating directory tree: {str(e)}"
 
-    def _inicializar_shot_builder(self, blender_version: str, project_path: Path, pipeline_folder: str):
+    def _extract_dependencies_for_headless(self, extensions_dir: Path, dependencies: dict):
+        """Extrae el Add-on de Kitsu en el Sandboxing VFS para que Blender lo encuentre durante la ejecución Headless."""
+        addons_dict = dependencies.get("addons", {})
+        
+        for addon_name, addon_version in addons_dict.items():
+            if "kitsu" in addon_name.lower():
+                print(f"[ProjectBuilder] Buscando binario para {addon_name} v{addon_version}...")
+                
+                boveda_addons = self.vault_root / "addons"
+                kitsu_zip = None
+                
+                if boveda_addons.exists():
+                    for archivo in boveda_addons.rglob("*.zip"):
+                        if addon_name.lower() in archivo.name.lower():
+                            kitsu_zip = archivo
+                            break
+                            
+                if kitsu_zip:
+                    safe_folder = "blender_kitsu"
+                    destino = extensions_dir / safe_folder
+
+                    destino.mkdir(parents=True, exist_ok=True)
+                    
+                    try:
+                        import zipfile
+                        with zipfile.ZipFile(kitsu_zip, 'r') as zf:
+                            zf.extractall(destino)
+                        print(f"[ProjectBuilder] Extension extraída en Sandbox desde {kitsu_zip.name}.")
+                    except Exception as e:
+                        print(f"[ProjectBuilder] Error extrayendo ZIP: {e}")
+                else:
+                    print(f"[ProjectBuilder] WARNING: No se encontro el ZIP para {addon_name} en {boveda_addons}")
+
+    def _inicializar_shot_builder(self, blender_version: str, project_path: Path, vfs_svn: str, vfs_local: str, project_id: str, kitsu_user: str, kitsu_pwd: str, dependencies: dict):
         """
-        Invokes Blender in Headless mode (background) to generate JSON files.
-        Intelligently extracts the compressed vault archive into a Temp directory, 
-        executes the hook, and automatically purges the binary cache[cite: 6].
+        Extrae Blender temporalmente y lo ejecuta en modo Headless.
+        Inyecta un script puente que resuelve dinámicamente el nombre del addon Kitsu,
+        autentica la sesión, establece el caché del proyecto, y delega al headless_builder.py.
         """
         os_name = self._get_os_info()
+        kitsu_host = self.config_factory.get_kitsu_api_url()
+        templates_dir = Path(__file__).parent / "templates"
         
-        # Mapeo de archivos comprimidos
+        sandbox_dir = project_path / vfs_local / "blender_data"
+        sandbox_dir.mkdir(parents=True, exist_ok=True)
+        extensions_dir = sandbox_dir / "extensions" / "user_default"
+        extensions_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Extracción JIT de las extensiones vitales antes de arrancar
+        self._extract_dependencies_for_headless(extensions_dir, dependencies)
+        
+        headless_env = os.environ.copy()
+        headless_env["BLENDER_USER_RESOURCES"] = str(sandbox_dir)
+        headless_env["BLENDER_USER_CONFIG"] = str(sandbox_dir / "config")
+        headless_env["BLENDER_USER_SCRIPTS"] = str(sandbox_dir / "scripts")
+        headless_env["OPENSTUDIO_BUILD_TARGET"] = "EDIT"
+        
         if os_name == "windows":
             archive_name = f"blender-{blender_version}-windows-x64.zip"
         elif os_name == "linux":
@@ -204,7 +254,6 @@ class ProjectBuilder:
 
         print(f"[ProjectBuilder] Extracting {archive_name} temporarily for Headless execution...")
         
-        # Descompresión volátil controlada por el recolector de basura
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
 
@@ -215,14 +264,10 @@ class ProjectBuilder:
                 elif '.tar' in archive_path.name or archive_path.suffix == '.xz':
                     with tarfile.open(archive_path, 'r:*') as tf:
                         tf.extractall(tmp_path)
-                else:
-                    print(f"[ProjectBuilder] WARNING: Unsupported archive format {archive_path.suffix}.")
-                    return
             except Exception as e:
                 print(f"[ProjectBuilder] WARNING: Extraction failed: {e}")
                 return
 
-            # Búsqueda profunda del binario dentro del contenedor extraído
             blender_bin = None
             for root, dirs, files in os.walk(tmp_path):
                 if os_name == "windows" and "blender.exe" in files:
@@ -235,30 +280,93 @@ class ProjectBuilder:
                     blender_bin = Path(root) / "Blender"
                     break
 
-            if not blender_bin or not blender_bin.exists():
-                print(f"[ProjectBuilder] WARNING: Binary not found inside extracted archive. Skipping Hook.")
+            if not blender_bin:
                 return
 
-            # --- SCRIPT HEADLESS ---
             script_content = f"""
 import bpy
+import sys
+import importlib
 import addon_utils
+from pathlib import Path
 
 try:
-    bpy.ops.preferences.addon_enable(module="bl_ext.user_default.blender_kitsu")
+    print("[ProjectBuilder] Refrescando repositorios de extensiones locales...")
+    addon_utils.modules(refresh=True)
     
-    prefs = bpy.context.preferences.addons["bl_ext.user_default.blender_kitsu"].preferences
-    prefs.project_root_dir = r"{project_path.as_posix()}"
+    print("[ProjectBuilder] Inyectando Repositorio de Extensiones Local (Sandboxing 4.2+)...")
+    prefs = bpy.context.preferences
+    if hasattr(prefs, "extensions") and hasattr(prefs.extensions, "repos"):
+        repos = prefs.extensions.repos
+        repo = repos.get("OpenStudio_Local_Vault")
+        if not repo:
+            repo = repos.new(name="OpenStudio_Local_Vault")
+        repo.enabled = True
+        repo.use_custom_directory = True
+        repo.custom_directory = r"{extensions_dir.as_posix()}"
+        repo.source = 'USER'
+        print("[ProjectBuilder] Repositorio de Extensiones anclado exitosamente.")
     
+    kitsu_module = "bl_ext.user_default.blender_kitsu"
+    try:
+        bpy.ops.preferences.addon_enable(module=kitsu_module)
+        print(f"[ProjectBuilder] Extension {{kitsu_module}} activada exitosamente.")
+    except Exception as e:
+        print("[ProjectBuilder] Fallback: Intentando cargar como Add-on clasico...")
+        kitsu_module = "blender_kitsu"
+        bpy.ops.preferences.addon_enable(module=kitsu_module)
+        
+    if kitsu_module != "blender_kitsu":
+        sys.modules["blender_kitsu"] = importlib.import_module(kitsu_module)
+        sys.modules["blender_kitsu.shot_builder"] = importlib.import_module(f"{{kitsu_module}}.shot_builder")
+        sys.modules["blender_kitsu.shot_builder.ops"] = importlib.import_module(f"{{kitsu_module}}.shot_builder.ops")
+
+    addon_prefs = bpy.context.preferences.addons[kitsu_module].preferences
+    
+    # Inyección VFS -> Garantiza que el archivo se guarde en la ruta del repositorio SVN local
+    addon_prefs.project_root_dir = r"{project_path.as_posix()}"
+    if hasattr(addon_prefs, "shot_dir_name"): addon_prefs.shot_dir_name = "shots"
+    if hasattr(addon_prefs, "asset_dir_name"): addon_prefs.asset_dir_name = "assets"
+    if hasattr(addon_prefs, "seq_dir_name"): addon_prefs.seq_dir_name = "strips"
+    if hasattr(addon_prefs, "edit_dir_name"): addon_prefs.edit_dir_name = "edit"
+    
+    # Monkey-Patching: Sobrescribir hardcode para apuntar a VFS_SVN
+    kitsu_prefs_mod = importlib.import_module(f"{{kitsu_module}}.prefs")
+    def custom_project_root_dir_get(context):
+        pref_instance = kitsu_prefs_mod.addon_prefs_get(context)
+        return Path(pref_instance.project_root_dir) / "{vfs_svn}"
+    kitsu_prefs_mod.project_root_dir_get = custom_project_root_dir_get
+    print("[ProjectBuilder] VFS Enrutado correctamente a /{vfs_svn}")
+
+    # Autenticación Silenciosa
+    addon_prefs.host = r"{kitsu_host}"
+    addon_prefs.email = r"{kitsu_user}"
+    addon_prefs.passwd = r"{kitsu_pwd}"
+    
+    print("[ProjectBuilder] Autenticando Sesion en Blender...")
+    bpy.ops.kitsu.session_start('EXEC_DEFAULT')
+    bpy.ops.kitsu.con_productions_load('EXEC_DEFAULT')
+    
+    try:
+        kitsu_cache = importlib.import_module(f"{{kitsu_module}}.cache")
+        kitsu_cache.project_active_set_by_id(bpy.context, "{project_id}")
+        addon_prefs.project_active_id = "{project_id}"
+    except Exception as cache_err:
+        print("[ProjectBuilder] Error en cache:", cache_err)
+
     if hasattr(bpy.ops.kitsu, "build_config_save_hooks"):
         bpy.ops.kitsu.build_config_save_hooks('EXEC_DEFAULT')
         bpy.ops.kitsu.build_config_save_settings('EXEC_DEFAULT')
         bpy.ops.kitsu.build_config_save_templates('EXEC_DEFAULT')
-        print("[HEADLESS OK] Shot Builder configuration sealed.")
-    else:
-        print("[HEADLESS WARNING] Kitsu operators missing.")
+        
+    print("[ProjectBuilder] Delegando al Headless Builder de la Boveda...")
+    sys.path.append(r"{templates_dir.as_posix()}")
+    import headless_builder
+    headless_builder.main()
+    
 except Exception as e:
-    print("[HEADLESS ERROR] Failure during Shot Builder configuration:", e)
+    import traceback
+    print(f"[HEADLESS ERROR] Failure during Pre-Flight configuration:\\n{{traceback.format_exc()}}")
 """
             try:
                 with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_script:
@@ -266,7 +374,21 @@ except Exception as e:
                     temp_script_path = temp_script.name
 
                 print(f"[ProjectBuilder] Launching Headless Blender v{blender_version}...")
-                subprocess.run([str(blender_bin), "-b", "--python", temp_script_path], check=False, capture_output=True)
+                
+                # Ejecutar con el ENVIRONMENT BLINDADO (headless_env)
+                result = subprocess.run(
+                    [str(blender_bin), "-b", "--python", temp_script_path], 
+                    env=headless_env,
+                    check=False, 
+                    capture_output=True, 
+                    text=True
+                )
+                
+                print(f"[HEADLESS BLENDER STDOUT]\n{result.stdout}")
+                if result.stderr:
+                    print(f"[HEADLESS BLENDER STDERR]\n{result.stderr}")
+
                 os.remove(temp_script_path)
             except Exception as e:
-                print(f"[ProjectBuilder] Critical failure invoking Headless subprocess: {e}")
+                import traceback
+                print(f"[ProjectBuilder] Critical failure invoking Headless subprocess:\n{traceback.format_exc()}")

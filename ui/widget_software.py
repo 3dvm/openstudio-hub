@@ -20,9 +20,9 @@ and bulk-registers upstream studio dependencies on the fly.
 
 import re
 import requests
-import zipfile
-import tempfile
-import shutil
+# import zipfile
+# import tempfile
+# import shutil
 from pathlib import Path
 
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
@@ -34,6 +34,11 @@ from PySide6.QtCore import Qt, QThread, Signal
 from core.file_downloader import FileDownloaderWorker
 from core.manifest_manager import ManifestManager
 from core.addon_parser import AddonParser
+
+# from core.git_packager import StudioToolsPackagerWorker
+
+# Importa el nuevo Worker encapsulado
+from core.provisioning_workers import StudioToolsFetchWorker
 
 MACUARE_LTS_VERSIONS = ("2.83", "2.93", "3.3", "3.6", "4.2", "4.5", "5.2")
 
@@ -87,84 +92,6 @@ class SubversionScraper(QThread):
             self.data_ready.emit(sub_versions)
         except Exception as e:
             self.error_occurred.emit(f"Sub-version parsing failed: {str(e)}")
-
-class StudioToolsPackagerWorker(QThread):
-    """Downloads master zip, extracts internal addons, repacks them individually, and registers valid ones."""
-    progress_updated = Signal(int)
-    status_update = Signal(str, str)
-    finished_packing = Signal()
-    error_occurred = Signal(str)
-
-    def __init__(self, master_zip_path: Path, manifest_manager: ManifestManager, current_version: str):
-        super().__init__()
-        self.master_zip = master_zip_path
-        self.manifest_manager = manifest_manager
-        self.current_version = current_version
-
-    def run(self):
-        try:
-            self.status_update.emit("Extracting and repackaging Blender Studio Tools...", "yellow")
-            temp_dir = Path(tempfile.mkdtemp())
-            
-            with zipfile.ZipFile(self.master_zip, 'r') as zf:
-                # 1. Identify all unique addon directories in the archive
-                addon_roots = set()
-                for info in zf.infolist():
-                    if "scripts-blender/addons/" in info.filename:
-                        parts = info.filename.split("scripts-blender/addons/")
-                        if len(parts) > 1 and parts[1]:
-                            addon_name = parts[1].split('/')[0]
-                            if addon_name:
-                                addon_roots.add(addon_name)
-                
-                if not addon_roots:
-                    raise ValueError("No add-ons found in the downloaded archive.")
-
-                total = len(addon_roots)
-                registered_count = 0
-                
-                # 2. Package and validate each addon dynamically
-                for i, addon_name in enumerate(addon_roots):
-                    self.status_update.emit(f"Packaging internal tool: {addon_name}...", "yellow")
-                    
-                    addon_zip_path = temp_dir / f"{addon_name}.zip"
-                    with zipfile.ZipFile(addon_zip_path, 'w', zipfile.ZIP_DEFLATED) as out_zf:
-                        prefix = None
-                        for info in zf.infolist():
-                            if f"scripts-blender/addons/{addon_name}/" in info.filename:
-                                if prefix is None:
-                                    idx = info.filename.find("scripts-blender/addons/")
-                                    prefix = info.filename[:idx + len("scripts-blender/addons/")]
-                                
-                                arcname = info.filename[len(prefix):]
-                                if arcname and not info.is_dir():
-                                    file_data = zf.read(info.filename)
-                                    out_zf.writestr(arcname, file_data)
-                    
-                    # 3. Validation via AddonParser
-                    parsed = AddonParser.parse_zip(addon_zip_path)
-                    if parsed["is_valid"]:
-                        if AddonParser.is_compatible(parsed["min_blender_version"], self.current_version):
-                            exito, msg = self.manifest_manager.register_addon(
-                                blender_version=self.current_version,
-                                addon_name=parsed["name"],
-                                addon_version=parsed["version"],
-                                source_zip=addon_zip_path
-                            )
-                            if exito:
-                                registered_count += 1
-                    
-                    self.progress_updated.emit(int(((i + 1) / total) * 100))
-            
-            # 4. Atomic Cleanup
-            shutil.rmtree(temp_dir)
-            self.master_zip.unlink(missing_ok=True)
-            
-            self.status_update.emit(f"✓ Studio Tools Auto-Fetch complete. Registered {registered_count} compatible add-ons.", "green")
-            self.finished_packing.emit()
-            
-        except Exception as e:
-            self.error_occurred.emit(str(e))
 
 class SoftwareProvisioningWidget(QWidget):
     def __init__(self, parent, config_factory, status_callback, **kwargs):
@@ -564,34 +491,24 @@ class SoftwareProvisioningWidget(QWidget):
         self.btn_fetch_studio.setEnabled(False)
         self.btn_register_addon.setEnabled(False)
         
-        url = "https://projects.blender.org/studio/blender-studio-tools/archive/main.zip"
-        dest = Path(tempfile.gettempdir()) / "blender_studio_tools_main.zip"
-        
-        self.status_callback(self.tr("Downloading Blender Studio Tools repository..."), "yellow")
         self.progress_bar.setValue(0)
         self.progress_bar.show()
         
-        self.studio_downloader = FileDownloaderWorker(url, dest)
-        self.studio_downloader.progress_updated.connect(self.progress_bar.setValue)
-        self.studio_downloader.download_completed.connect(self._on_studio_tools_downloaded)
-        self.studio_downloader.error_occurred.connect(self._on_studio_tools_error)
-        self.studio_downloader.start()
-
-    def _on_studio_tools_downloaded(self, path: Path):
-        self.studio_downloader.deleteLater()
-        self.studio_downloader = None
+        # Obtenemos la ruta absoluta de la bóveda de forma directa
+        vault_root = self.config_factory.get_workspace_root() / "openstudio_vault"
         
-        current_version = self.combo_versions.currentText()
-        self.packager_worker = StudioToolsPackagerWorker(path, self.manifest_manager, current_version)
-        self.packager_worker.progress_updated.connect(self.progress_bar.setValue)
-        self.packager_worker.status_update.connect(self.status_callback)
-        self.packager_worker.finished_packing.connect(self._on_studio_tools_packaged)
-        self.packager_worker.error_occurred.connect(self._on_studio_tools_error)
-        self.packager_worker.start()
+        # Le entregamos al Worker puramente la ruta física
+        self.studio_fetch_worker = StudioToolsFetchWorker(vault_root, current_version)
+        self.studio_fetch_worker.progress_updated.connect(self.progress_bar.setValue)
+        self.studio_fetch_worker.status_update.connect(self.status_callback)
+        self.studio_fetch_worker.finished_packing.connect(self._on_studio_tools_packaged)
+        self.studio_fetch_worker.error_occurred.connect(self._on_studio_tools_error)
+        self.studio_fetch_worker.start()
 
     def _on_studio_tools_packaged(self):
-        self.packager_worker.deleteLater()
-        self.packager_worker = None
+        if hasattr(self, 'studio_fetch_worker') and self.studio_fetch_worker:
+            self.studio_fetch_worker.deleteLater()
+            self.studio_fetch_worker = None
         
         self.btn_fetch_studio.setEnabled(True)
         self.btn_register_addon.setEnabled(True)
@@ -599,8 +516,9 @@ class SoftwareProvisioningWidget(QWidget):
         self._refresh_manifest_ui()
 
     def _on_studio_tools_error(self, error: str):
-        if self.studio_downloader: self.studio_downloader.deleteLater()
-        if hasattr(self, 'packager_worker') and self.packager_worker: self.packager_worker.deleteLater()
+        if hasattr(self, 'studio_fetch_worker') and self.studio_fetch_worker: 
+            self.studio_fetch_worker.deleteLater()
+            self.studio_fetch_worker = None
         
         self.btn_fetch_studio.setEnabled(True)
         self.btn_register_addon.setEnabled(True)
