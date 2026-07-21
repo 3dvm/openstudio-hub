@@ -325,19 +325,21 @@ try:
     
     # Inyección VFS -> Garantiza que el archivo se guarde en la ruta del repositorio SVN local
     addon_prefs.project_root_dir = r"{project_path.as_posix()}"
-    if hasattr(addon_prefs, "shot_dir_name"): addon_prefs.shot_dir_name = "shots"
-    if hasattr(addon_prefs, "asset_dir_name"): addon_prefs.asset_dir_name = "assets"
-    if hasattr(addon_prefs, "seq_dir_name"): addon_prefs.seq_dir_name = "strips"
-    if hasattr(addon_prefs, "edit_dir_name"): addon_prefs.edit_dir_name = "edit"
+    # Enrutamiento estructural de archivos .blend (VCS / SVN)
+    if hasattr(addon_prefs, "shot_dir_name"): addon_prefs.shot_dir_name = r"{vfs_svn}/pro/shots"
+    if hasattr(addon_prefs, "asset_dir_name"): addon_prefs.asset_dir_name = r"{vfs_svn}/pro/assets"
+    if hasattr(addon_prefs, "seq_dir_name"): addon_prefs.seq_dir_name = r"{vfs_svn}/pre/strips"
+    if hasattr(addon_prefs, "edit_dir_name"): addon_prefs.edit_dir_name = r"{vfs_svn}/edit"
     
-    # Monkey-Patching: Sobrescribir hardcode para apuntar a VFS_SVN
-    kitsu_prefs_mod = importlib.import_module(f"{{kitsu_module}}.prefs")
-    def custom_project_root_dir_get(context):
-        pref_instance = kitsu_prefs_mod.addon_prefs_get(context)
-        return Path(pref_instance.project_root_dir) / "{vfs_svn}"
-    kitsu_prefs_mod.project_root_dir_get = custom_project_root_dir_get
-    print("[ProjectBuilder] VFS Enrutado correctamente a /{vfs_svn}")
+    # Enrutamiento estructural de Media y Renders (SHARED) según el estándar del estudio
+    if hasattr(addon_prefs, "shot_playblast_root_dir"): addon_prefs.shot_playblast_root_dir = r"{{vfs_shared}}/editorial/footage"
+    if hasattr(addon_prefs, "seq_playblast_root_dir"): addon_prefs.seq_playblast_root_dir = r"{{vfs_shared}}/editorial/footage"
+    if hasattr(addon_prefs, "frames_root_dir"): addon_prefs.frames_root_dir = r"{{vfs_shared}}/editorial/footage"
+    if hasattr(addon_prefs, "edit_export_dir"): addon_prefs.edit_export_dir = r"{{vfs_shared}}/editorial/export"
+    if hasattr(addon_prefs, "farm_dir"): addon_prefs.farm_dir = "render"
 
+    print("[ProjectBuilder] Rutas de Kitsu enrutadas correctamente a VFS_SVN y VFS_SHARED")
+    
     # Autenticación Silenciosa
     addon_prefs.host = r"{kitsu_host}"
     addon_prefs.email = r"{kitsu_user}"
