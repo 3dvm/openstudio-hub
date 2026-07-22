@@ -78,3 +78,28 @@ class AbstractVCS(ABC):
         provocados por cortes abruptos de energía, caídas de red o cierres forzados.
         """
         pass
+
+    @abstractmethod
+    def setup_ignore(self, patterns: List[str]) -> bool:
+        """
+        Configura las reglas nativas del motor VCS para ignorar archivos temporales.
+        (Ej: Escribir un .gitignore en Git o aplicar svn:ignore en Subversion).
+        """
+        pass
+
+    @abstractmethod
+    def add_all(self, path: str = ".") -> bool:
+        """
+        Registra todos los archivos nuevos o modificados en la ruta dada, 
+        preparándolos para el commit.
+        """
+        pass
+
+    @abstractmethod
+    def create_server_repository(self, project_name: str, vfs_svn: str) -> bool:
+        """
+        Crea el repositorio remoto en el servidor para el nuevo proyecto 
+        e inicializa la topología base si es necesario.
+        """
+        pass
+

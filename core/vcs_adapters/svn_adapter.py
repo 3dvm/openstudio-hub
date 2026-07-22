@@ -153,3 +153,62 @@ class SVNAdapter(AbstractVCS):
             self._run_subprocess(cmd, cwd=self.workspace_dir)
             return True
         return False
+
+    def setup_ignore(self, patterns: List[str]) -> bool:
+        """Aplica la propiedad svn:ignore sobre la raíz del workspace."""
+        if not (self.workspace_dir / ".svn").exists():
+            return False
+            
+        # Escribimos un archivo temporal con los patrones
+        ignore_file = self.workspace_dir / ".svn_ignore_temp"
+        with open(ignore_file, "w", encoding="utf-8") as f:
+            f.write("\n".join(patterns) + "\n")
+        
+        # Aplicamos la propiedad de SVN leyendo el archivo
+        cmd = ["svn", "propset", "svn:ignore", "-F", str(ignore_file), "."]
+        self._run_subprocess(cmd, cwd=self.workspace_dir)
+        
+        # Limpieza del temporal
+        ignore_file.unlink(missing_ok=True)
+        return True
+
+    def add_all(self, path: str = ".") -> bool:
+        """Registra archivos forzando la recursividad, ignorando los no-versionados por regla."""
+        cmd = ["svn", "add", "--force", path]
+        self._run_subprocess(cmd, cwd=self.workspace_dir)
+        return True
+
+    def create_server_repository(self, project_name: str, vfs_svn: str) -> bool:
+        """Crea el repositorio SVN en el servidor (Soporta Docker local para desarrollo)."""
+        if "localhost" not in self.repo_url:
+            # Hay que implementar la creación del repositorio en servers remotos con SSH.
+            print("[SVNAdapter] Repositorio remoto detectado. Asumiendo que el repo ya existe en el servidor.")
+            return True # Si es un server real, asumimos que el admin ya creó el repo o se hace vía API
+            
+        try:
+            import subprocess
+            # Creación del repositorio en el contenedor Docker
+            subprocess.run(["docker", "exec", "openstudio_local_svn", "svnadmin", "create", f"/home/svn/{project_name}"], check=True, capture_output=True)
+            
+            # Configuración de permisos
+            conf_cmd = (
+                f"echo '[general]' > /home/svn/{project_name}/conf/svnserve.conf && "
+                f"echo 'anon-access = none' >> /home/svn/{project_name}/conf/svnserve.conf && "
+                f"echo 'auth-access = write' >> /home/svn/{project_name}/conf/svnserve.conf && "
+                f"echo 'password-db = passwd' >> /home/svn/{project_name}/conf/svnserve.conf"
+            )
+            subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", conf_cmd], check=True, capture_output=True)
+            
+            # Creación del usuario admin default para localhost
+            pwd_cmd = f"echo '[users]' > /home/svn/{project_name}/conf/passwd && echo 'admin = admin123' >> /home/svn/{project_name}/conf/passwd"
+            subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", pwd_cmd], check=True, capture_output=True)
+            
+            # Inyección de la topología VFS base
+            mkdir_cmd = f"svn mkdir file:///home/svn/{project_name}/{vfs_svn} -m 'Init Hub Topology'"
+            subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", mkdir_cmd], check=True, capture_output=True)
+            
+            print(f"[SVNAdapter] ✓ Repositorio local '{project_name}' creado en Docker exitosamente.")
+            return True
+        except Exception as e:
+            print(f"[SVNAdapter] WARNING: Fallo en la configuración del SVN Docker: {e}")
+            return False

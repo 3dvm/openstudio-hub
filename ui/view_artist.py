@@ -1,4 +1,4 @@
-# =========================================================================================
+
 # OPENSTUDIOHUB
 # Módulo: ui/view_artist.py
 # Rol Arquitectónico: UI View / Artist Dashboard (PySide6)
@@ -226,17 +226,27 @@ class ViewArtist(BaseDashboardView):
         self.actualizar_status(self.tr("🟢 Synchronized: {0} active tasks found.").format(len(tasks)), "green")
         
         vfs_pipeline = self.config_factory.get_vfs_pipeline_name()
+        nas_root = self.config_factory.get_workspace_root()
         
         for task_data in tasks:
             if TaskCard:
-                p_name = task_data.get('project', {}).get('name', 'Unknown')
-                p_code = task_data.get('project', {}).get('code', p_name)
+                # 1. Extracción directa respaldada por nuestro dump forense
+                p_name = task_data.get('project_name') or (task_data.get('project') or {}).get('name', 'Unknown')
                 
-                temp_root = self.nextcloud_dir / p_name
-                if not temp_root.exists() and p_code:
-                    temp_root = self.nextcloud_dir / p_code
+                # 2. Normalización de carpeta según la convención del ProjectBuilder
+                folder_name = p_name.strip().lower().replace(" ", "-")
+                temp_root = nas_root / folder_name
 
-                # Verificación estricta de la existencia física en disco
+                # === PRINTS DE DEPURACIÓN ===
+                print(f"\n[DEBUG] --- TAREA ENCONTRADA ---")
+                print(f"[DEBUG] Nombre extraído (p_name): '{p_name}'")
+                print(f"[DEBUG] Carpeta calculada: '{folder_name}'")
+                print(f"[DEBUG] Buscando ruta física en: {temp_root}")
+                print(f"[DEBUG] ¿Existe la carpeta?: {temp_root.exists()}")
+                print(f"----------------------------\n")
+                # ============================
+
+                # Verificación de existencia física en el NAS
                 if temp_root.exists():
                     project_root = temp_root
                 else:
@@ -261,12 +271,70 @@ class ViewArtist(BaseDashboardView):
                     can_work = False
                     blocked_reason = self.tr("Folder Missing on NAS")
 
+                # 2. INYECCIÓN DEL PATH RESOLVER EN EL CALLBACK DE LAUNCH
                 def launch_cb(p_root: Path, conf_path: Path, t_data: dict):
-                    self.actualizar_status(self.tr("Launch requested for: {0}").format(t_data.get('name', 'Unknown')), "yellow")
-                
+                    import json
+                    import subprocess
+                    from core.local_installer import LocalInstaller
+                    from core.path_resolver import PathResolver
+                    
+                    self.actualizar_status(self.tr("Resolving task file path..."), "yellow")
+                    
+                    if not conf_path.exists():
+                        self.actualizar_status(self.tr("Config file missing. Reinstall workspace."), "red")
+                        return
+                        
+                    with open(conf_path, 'r', encoding='utf-8') as f:
+                        local_config = json.load(f)
+                        
+                    blender_version = local_config.get("blender_version", "")
+                    installer = LocalInstaller(p_root.parent, self.config_factory)
+                    os_name, _ = installer._get_os_info()
+                    
+                    blender_folder = installer.boveda_blender / f"blender-{blender_version}-{os_name}-x64"
+                    
+                    if os_name == "windows":
+                        blender_bin = blender_folder / "blender.exe"
+                    elif os_name == "macos":
+                        blender_bin = blender_folder / "Blender.app" / "Contents" / "MacOS" / "Blender"
+                    else:
+                        blender_bin = blender_folder / "blender"
+
+                    if not blender_bin.exists():
+                        self.actualizar_status(self.tr("Blender {0} not found in Vault.").format(blender_version), "red")
+                        return
+                        
+                    # Resolución de ruta exacta mediante PathResolver
+                    resolver = PathResolver()
+                    relative_blend = resolver.resolve(t_data)
+                    
+                    vfs_svn = self.config_factory.get_vfs_svn_name()
+                    args = [str(blender_bin), "--", "--project_root", str(p_root)]
+                    
+                    # Intentar inyectar el archivo de la tarea específica si existe
+                    if relative_blend:
+                        target_file = p_root / vfs_svn / "pro" / relative_blend
+                        if target_file.exists():
+                            args.insert(1, str(target_file))
+                            self.actualizar_status(self.tr("🚀 Launching Task: {0}").format(target_file.name), "green")
+                        else:
+                            self.actualizar_status(self.tr("🚀 File not found. Launching Project Root..."), "yellow")
+                    else:
+                        self.actualizar_status(self.tr("🚀 Launching Project Environment..."), "green")
+                        
+                    # Lanzar Blender de forma desvinculada
+                    subprocess.Popen(args)
+                    
+                    main_window = self.window()
+                    if hasattr(main_window, 'registrar_instancia'):
+                        main_window.registrar_instancia(True)
+
                 def install_cb(p_root: Path, t_data: dict):
                     self.iniciar_instalacion_fisica(p_root, t_data)
 
+                # =========================================================
+                # INSERTA ESTO: Creación de la tarjeta y guardado en la lista
+                # =========================================================
                 tarjeta = TaskCard(
                     parent=self.grid_widget,
                     task_data=task_data,
@@ -280,10 +348,13 @@ class ViewArtist(BaseDashboardView):
                     blocked_reason=blocked_reason
                 )
             else:
+                # Fallback por si la importación de TaskCard falla
                 tarjeta = QFrame()
                 tarjeta.setFixedSize(280, 220)
 
+            # ¡Añadimos la tarjeta a la cuadrícula!
             self._task_widgets.append(tarjeta)
+            # =========================================================
             
         self._current_cols = 0 
         self._rearrange_grid()

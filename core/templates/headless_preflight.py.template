@@ -1,0 +1,100 @@
+import bpy
+import sys
+import importlib
+import addon_utils
+from pathlib import Path
+
+try:
+    print("[ProjectBuilder] Refrescando repositorios de extensiones locales...")
+    addon_utils.modules(refresh=True)
+    
+    print("[ProjectBuilder] Inyectando Repositorio de Extensiones Local (Sandboxing 4.2+)...")
+    prefs = bpy.context.preferences
+    if hasattr(prefs, "extensions") and hasattr(prefs.extensions, "repos"):
+        repos = prefs.extensions.repos
+        repo = repos.get("OpenStudio_Local_Vault")
+        if not repo:
+            repo = repos.new(name="OpenStudio_Local_Vault")
+        repo.enabled = True
+        repo.use_custom_directory = True
+        repo.custom_directory = r"{EXTENSIONS_DIR}"
+        repo.source = 'USER'
+        print("[ProjectBuilder] Repositorio de Extensiones anclado exitosamente.")
+    
+    kitsu_module = "bl_ext.user_default.blender_kitsu"
+    try:
+        bpy.ops.preferences.addon_enable(module=kitsu_module)
+        print(f"[ProjectBuilder] Extension {kitsu_module} activada exitosamente.")
+    except Exception as e:
+        print("[ProjectBuilder] Fallback: Intentando cargar como Add-on clasico...")
+        kitsu_module = "blender_kitsu"
+        bpy.ops.preferences.addon_enable(module=kitsu_module)
+        
+    if kitsu_module != "blender_kitsu":
+        sys.modules["blender_kitsu"] = importlib.import_module(kitsu_module)
+        sys.modules["blender_kitsu.shot_builder"] = importlib.import_module(f"{kitsu_module}.shot_builder")
+        sys.modules["blender_kitsu.shot_builder.ops"] = importlib.import_module(f"{kitsu_module}.shot_builder.ops")
+
+    addon_prefs = bpy.context.preferences.addons[kitsu_module].preferences
+    
+    # Inyección VFS -> Garantiza que el archivo se guarde en la ruta del repositorio SVN local
+    addon_prefs.project_root_dir = r"{PROJECT_PATH}"
+
+    # =========================================================
+    # MONKEY PATCH INMEDIATO PARA Kitsu (Modo Headless)
+    # =========================================================
+    kitsu_prefs_mod = importlib.import_module(f"{kitsu_module}.prefs")
+    def custom_root_dir_get(context):
+        pref_instance = kitsu_prefs_mod.addon_prefs_get(context)
+        return Path(pref_instance.project_root_dir) / "{VFS_SVN}"
+    kitsu_prefs_mod.project_root_dir_get = custom_root_dir_get
+    print("[ProjectBuilder] ✓ Monkey patch VFS aplicado en Headless.")
+    # =========================================================
+
+    # Enrutamiento estructural de archivos .blend (VCS / SVN)
+    # if hasattr(addon_prefs, "project_root_dir"): addon_prefs.project_root_dir = r"{VFS_SVN}"
+    if hasattr(addon_prefs, "shot_dir_name"): addon_prefs.shot_dir_name = r"{VFS_SVN}/pro/shots"
+    if hasattr(addon_prefs, "asset_dir_name"): addon_prefs.asset_dir_name = r"{VFS_SVN}/pro/assets"
+    if hasattr(addon_prefs, "seq_dir_name"): addon_prefs.seq_dir_name = r"{VFS_SVN}/pre/strips"
+    if hasattr(addon_prefs, "edit_dir_name"): addon_prefs.edit_dir_name = r"{VFS_SVN}/edit"
+    # print(addon_prefs.project_root_dir)
+    # breakpoint()
+    
+    # Enrutamiento estructural de Media y Renders (SHARED) según el estándar del estudio
+    if hasattr(addon_prefs, "shot_playblast_root_dir"): addon_prefs.shot_playblast_root_dir = r"{VFS_SHARED}/editorial/footage"
+    if hasattr(addon_prefs, "seq_playblast_root_dir"): addon_prefs.seq_playblast_root_dir = r"{VFS_SHARED}/editorial/footage"
+    if hasattr(addon_prefs, "frames_root_dir"): addon_prefs.frames_root_dir = r"{VFS_SHARED}/editorial/footage"
+    if hasattr(addon_prefs, "edit_export_dir"): addon_prefs.edit_export_dir = r"{VFS_SHARED}/editorial/export"
+    if hasattr(addon_prefs, "farm_dir"): addon_prefs.farm_dir = "render"
+
+    print("[ProjectBuilder] Rutas de Kitsu enrutadas correctamente a VFS_SVN y VFS_SHARED")
+    
+    # Autenticación Silenciosa
+    addon_prefs.host = r"{KITSU_HOST}"
+    addon_prefs.email = r"{KITSU_USER}"
+    addon_prefs.passwd = r"{KITSU_PWD}"
+    
+    print("[ProjectBuilder] Autenticando Sesion en Blender...")
+    bpy.ops.kitsu.session_start('EXEC_DEFAULT')
+    bpy.ops.kitsu.con_productions_load('EXEC_DEFAULT')
+    
+    try:
+        kitsu_cache = importlib.import_module(f"{kitsu_module}.cache")
+        kitsu_cache.project_active_set_by_id(bpy.context, "{PROJECT_ID}")
+        addon_prefs.project_active_id = "{PROJECT_ID}"
+    except Exception as cache_err:
+        print("[ProjectBuilder] Error en cache:", cache_err)
+
+    if hasattr(bpy.ops.kitsu, "build_config_save_hooks"):
+        bpy.ops.kitsu.build_config_save_hooks('EXEC_DEFAULT')
+        bpy.ops.kitsu.build_config_save_settings('EXEC_DEFAULT')
+        bpy.ops.kitsu.build_config_save_templates('EXEC_DEFAULT')
+        
+    print("[ProjectBuilder] Delegando al Headless Builder de la Boveda...")
+    sys.path.append(r"{TEMPLATES_DIR}")
+    import headless_builder
+    headless_builder.main()
+    
+except Exception as e:
+    import traceback
+    print(f"[HEADLESS ERROR] Failure during Pre-Flight configuration:\n{traceback.format_exc()}")

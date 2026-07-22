@@ -1,0 +1,41 @@
+import bpy
+import sys
+import importlib
+from pathlib import Path
+
+def aplicar_parche_vfs(dummy=None):
+    try:
+        kitsu_module = sys.modules.get("bl_ext.user_default.blender_kitsu") or sys.modules.get("blender_kitsu")
+        if not kitsu_module: return
+        
+        kitsu_prefs = importlib.import_module(f"{kitsu_module.__name__}.prefs")
+        
+        # Evitar doble parcheo si se recarga el script
+        if hasattr(kitsu_prefs, "project_root_dir_get") and kitsu_prefs.project_root_dir_get.__name__ == "custom_root_dir_get":
+            return 
+            
+        # Obliga a Kitsu a usar el VFS del Hub ignorando 'project_files'
+        def custom_root_dir_get(context):
+            pref_instance = kitsu_prefs.addon_prefs_get(context)
+            return Path(pref_instance.project_root_dir) / "{VFS_SVN_PLACEHOLDER}"
+            
+        kitsu_prefs.project_root_dir_get = custom_root_dir_get
+        print("[OpenStudio Hub] ✓ VFS Topography ({VFS_SVN_PLACEHOLDER}) inyectada en Kitsu permanentemente.")
+    except Exception as e:
+        print(f"[OpenStudio Hub] Error aplicando parche VFS: {e}")
+
+# Handler que espera a que el archivo abra y los addons carguen
+@bpy.app.handlers.persistent
+def openstudio_vfs_handler(dummy=None):
+    aplicar_parche_vfs()
+
+def register():
+    if openstudio_vfs_handler not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(openstudio_vfs_handler)
+
+def unregister():
+    if openstudio_vfs_handler in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(openstudio_vfs_handler)
+
+if __name__ == "__main__":
+    register()
