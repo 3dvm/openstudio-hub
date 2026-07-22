@@ -44,6 +44,8 @@ def _setup_openstudio_environment():
     # 2. Activar herramientas y add-ons
     kitsu_module = _activar_herramientas_contextuales(task_type)
     
+    _inyectar_splash_screen()
+    
     # 3. Preferencias Globales Físicas y Autenticación
     if kitsu_module:
         _configurar_preferencias_estudio(kitsu_module, project_root, prod_folder)
@@ -217,6 +219,32 @@ def _inyectar_cache_basica(kitsu_module: str, entity_type: str):
 
     except Exception:
         pass
+
+def _inyectar_splash_screen():
+    """Sobrescribe la UI de Blender para cargar el Splash Screen corporativo del proyecto."""
+    splash_path = os.environ.get("OPENSTUDIO_SPLASH_PATH", "")
+    
+    if not splash_path or not os.path.exists(splash_path):
+        return
+        
+    def custom_splash_handler(dummy=None):
+        import bpy
+        from pathlib import Path
+        img_name = Path(splash_path).name
+        
+        # Cargar a memoria solo si no existe
+        if img_name not in bpy.data.images:
+            bpy.data.images.load(splash_path)
+            
+        try:
+            bpy.context.preferences.view.splash_image = img_name
+        except Exception as e:
+            print(f"[OPENSTUDIO HUB] Fallo al aplicar imagen splash: {e}")
+            
+    # Añadimos el handler para que Blender lo dibuje al terminar de inicializar
+    import bpy
+    bpy.app.handlers.load_post.append(custom_splash_handler)
+    print(f"[OPENSTUDIO HUB] Splash Screen programado: {splash_path}")
 
 def _aplicar_guardrails_rbac():
     @classmethod

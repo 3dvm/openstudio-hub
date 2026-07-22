@@ -55,25 +55,30 @@ def lanzar_blender(project_root: Path, config_path: Path, svn_user: str, svn_pwd
         template_name = adn.get("template", "Macuare_Estudio")
         version = adn.get("version_locking", {}).get("blender_version", adn.get("blender_version", "5.1.2"))
 
-        status_callback(f"Buscando Blender {version}...", "yellow")
+        #status_callback(f"Buscando Blender {version}...", "yellow")
 
-        # 1. Búsqueda Inteligente de Binario (Vault vs Local Sandbox)
+        status_callback(f"Buscando Blender {version} en Sandbox Local...", "yellow")
+
+        # 1. Búsqueda Estricta de Binario (Exclusivo en Sandbox VFS)
         os_name = _get_os_info()
         archive_folder = f"blender-{version}-{os_name}-x64"
         
-        boveda_blender = vault_path / "blender_versions" / archive_folder
+        base_blender_dir = project_root / vfs_local / "blender-build" / archive_folder
         
-        # Windows usa blender.exe, Unix usa blender
-        bin_name = "blender.exe" if os_name == "windows" else "blender"
-        
-        blender_bin = boveda_blender / bin_name
+        if os_name == "windows":
+            blender_bin = base_blender_dir / "blender.exe"
+        elif os_name == "macos":
+            # En macOS, el ejecutable real vive dentro del paquete .app
+            blender_bin = base_blender_dir / "Blender.app" / "Contents" / "MacOS" / "Blender"
+            if not blender_bin.exists():
+                blender_bin = base_blender_dir / "Blender" # Fallback de seguridad
+        else:
+            blender_bin = base_blender_dir / "blender"
 
         if not blender_bin.exists():
-            blender_bin = project_root / vfs_local / "blender-build" / archive_folder / bin_name
+            raise FileNotFoundError(f"Fallo de Sandboxing: No se encontró el ejecutable en {blender_bin}")
 
-        if not blender_bin.exists():
-            raise FileNotFoundError(f"No se encontro el ejecutable para Blender {version} en {blender_bin}")
-
+        status_callback(f"Ejecutable aislado encontrado en: {archive_folder}", "green")
         status_callback("Preparando Sandboxing y Variables de Entorno...", "yellow")
 
         # 2. Configurar Sandbox Dirs (Aislamiento absoluto VFS)
@@ -105,6 +110,12 @@ def lanzar_blender(project_root: Path, config_path: Path, svn_user: str, svn_pwd
         env["OPENSTUDIO_KITSU_PWD"] = kitsu_pwd
         env["OPENSTUDIO_KITSU_HOST"] = kitsu_host
 
+        # NUEVO: Calcular ruta del Splash Screen usando el ConfigFactory
+        vfs_pipe = config_factory.get_vfs_pipeline_name()
+        splash_path = project_root / vfs_pipe / "splash.png"
+        env["OPENSTUDIO_SPLASH_PATH"] = str(splash_path) if splash_path.exists() else ""
+
+
         # ---------------------------------------------------------
         # PATH RESOLVER: INYECCIÓN DINÁMICA DE CONTEXTO
         # ---------------------------------------------------------
@@ -112,7 +123,17 @@ def lanzar_blender(project_root: Path, config_path: Path, svn_user: str, svn_pwd
             resolver = PathResolver()
             resolved_rel_path = resolver.resolve(task_data)
             if resolved_rel_path:
-                target_file = project_root / production_folder / resolved_rel_path
+                import glob
+                # Quitamos el ".blend" para buscar variaciones con -v001, -v002, etc.
+                base_target_str = str(project_root / production_folder / resolved_rel_path).replace(".blend", "")
+                
+                versioned_files = glob.glob(f"{base_target_str}-v*.blend")
+                if versioned_files:
+                    # Ordenamos y tomamos el archivo con la versión más reciente
+                    target_file = Path(sorted(versioned_files)[-1])
+                else:
+                    # Fallback estándar
+                    target_file = Path(f"{base_target_str}.blend")
 
         env["OPENSTUDIO_TARGET_FILE"] = str(target_file) if target_file else ""
         
@@ -143,9 +164,17 @@ def lanzar_blender(project_root: Path, config_path: Path, svn_user: str, svn_pwd
 
         status_callback(f"Arrancando {project_name} (Contexto: {task_type.upper()})...", "green")
 
+        # =========================================================
+        # SANEAMIENTO DE ENTORNO: Evitar TypeError por Kitsu 'null'
+        # =========================================================
+        clean_env = {}
+        for k, v in env.items():
+            clean_env[k] = str(v) if v is not None else ""
+        # =========================================================
+
         # 4. Lanzar el subproceso con Sandboxing Inyectado
         cmd = [str(blender_bin), "--app-template", template_name, "--python", str(bootstrap_dst)]
-        proceso = subprocess.Popen(cmd, env=env)
+        proceso = subprocess.Popen(cmd, env=clean_env)
 
         status_callback(f"Blender en ejecucion ({project_name})...", "#00aaff")
         proceso.wait()

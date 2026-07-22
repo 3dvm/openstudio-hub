@@ -17,6 +17,8 @@ una vez que el Gatekeeper ha dado luz verde a la sanidad del archivo.
 """
 
 import bpy
+import os
+from pathlib import Path
 
 def disparar_playblast_kitsu():
     """
@@ -46,9 +48,28 @@ def disparar_playblast_kitsu():
         print(f"[SYNERGY HOOK FATAL ERROR] Excepción al delegar el evento a Kitsu: {e}")
         return False
 
+def inyectar_splash_corporativo(dummy=None):
+    """Atrapa el inicio de Blender y sobrescribe el logo default con la portada del Hub."""
+    splash_path = os.environ.get("OPENSTUDIO_SPLASH_PATH", "")
+    
+    if not splash_path or not os.path.exists(splash_path):
+        return
+        
+    img_name = Path(splash_path).name
+    if img_name not in bpy.data.images:
+        bpy.data.images.load(splash_path)
+        
+    try:
+        bpy.context.preferences.view.splash_image = img_name
+    except Exception:
+        
+
 def register():
     # Este módulo expone funciones puras, no requiere registrar clases en bpy
+    bpy.app.handlers.load_post.append(inyectar_splash_corporativo)
     pass
 
 def unregister():
+    if inyectar_splash_corporativo in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(inyectar_splash_corporativo)
     pass

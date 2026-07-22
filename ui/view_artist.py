@@ -110,7 +110,22 @@ class InstallProjectWorker(QThread):
             self.finished_install.emit(success, msg)
         except Exception as e:
             self.finished_install.emit(False, str(e))
-
+            
+class LaunchTaskWorker(QThread):
+    """Hilo secundario para ejecutar Blender sin congelar la interfaz gráfica."""
+    finished_launch = Signal(bool, str)
+    
+    def __init__(self, kwargs_dict):
+        super().__init__()
+        self.kwargs = kwargs_dict
+        
+    def run(self):
+        try:
+            from core.env_launcher import lanzar_blender
+            lanzar_blender(**self.kwargs)
+            self.finished_launch.emit(True, "Sesión de DCC finalizada y Lock liberado.")
+        except Exception as e:
+            self.finished_launch.emit(False, f"Error lanzando DCC: {str(e)}")
 
 class ViewArtist(BaseDashboardView):
     def __init__(self, parent: QWidget, auth_manager: AuthManager, nextcloud_dir: Path, 
@@ -272,62 +287,64 @@ class ViewArtist(BaseDashboardView):
                     blocked_reason = self.tr("Folder Missing on NAS")
 
                 # 2. INYECCIÓN DEL PATH RESOLVER EN EL CALLBACK DE LAUNCH
+                # 2. DELEGACIÓN AL ORQUESTADOR DCC (Env Launcher)
                 def launch_cb(p_root: Path, conf_path: Path, t_data: dict):
-                    import json
-                    import subprocess
-                    from core.local_installer import LocalInstaller
-                    from core.path_resolver import PathResolver
+                    #from core.env_launcher import lanzar_blender
                     
-                    self.actualizar_status(self.tr("Resolving task file path..."), "yellow")
+                    self.actualizar_status(self.tr("🚀 Delegando al Orquestador DCC..."), "yellow")
                     
                     if not conf_path.exists():
                         self.actualizar_status(self.tr("Config file missing. Reinstall workspace."), "red")
                         return
                         
-                    with open(conf_path, 'r', encoding='utf-8') as f:
-                        local_config = json.load(f)
-                        
-                    blender_version = local_config.get("blender_version", "")
-                    installer = LocalInstaller(p_root.parent, self.config_factory)
-                    os_name, _ = installer._get_os_info()
-                    
-                    blender_folder = installer.boveda_blender / f"blender-{blender_version}-{os_name}-x64"
-                    
-                    if os_name == "windows":
-                        blender_bin = blender_folder / "blender.exe"
-                    elif os_name == "macos":
-                        blender_bin = blender_folder / "Blender.app" / "Contents" / "MacOS" / "Blender"
-                    else:
-                        blender_bin = blender_folder / "blender"
+                    # Extraer credenciales base (El env_launcher aplicará el bypass de admin en localhost)
+                    #import os
+                    vcs_user = "admin"
+                    vcs_pwd = "admin123"
 
-                    if not blender_bin.exists():
-                        self.actualizar_status(self.tr("Blender {0} not found in Vault.").format(blender_version), "red")
+                    kitsu_user = self.vault._transient_email
+                    kitsu_pwd = self.vault._transient_password
+
+                    if not kitsu_pwd:
+                        # Fallback (si la bóveda está vacía, pedimos que re-inicie sesión)
+                        self.actualizar_status("Kitsu Password lost in RAM. Please log out and log in again.", "red")
                         return
-                        
-                    # Resolución de ruta exacta mediante PathResolver
-                    resolver = PathResolver()
-                    relative_blend = resolver.resolve(t_data)
+
+                    kitsu_host = self.config_factory.get_kitsu_api_url()
                     
-                    vfs_svn = self.config_factory.get_vfs_svn_name()
-                    args = [str(blender_bin), "--", "--project_root", str(p_root)]
-                    
-                    # Intentar inyectar el archivo de la tarea específica si existe
-                    if relative_blend:
-                        target_file = p_root / vfs_svn / "pro" / relative_blend
-                        if target_file.exists():
-                            args.insert(1, str(target_file))
-                            self.actualizar_status(self.tr("🚀 Launching Task: {0}").format(target_file.name), "green")
-                        else:
-                            self.actualizar_status(self.tr("🚀 File not found. Launching Project Root..."), "yellow")
-                    else:
-                        self.actualizar_status(self.tr("🚀 Launching Project Environment..."), "green")
-                        
-                    # Lanzar Blender de forma desvinculada
-                    subprocess.Popen(args)
-                    
+                    # Delegar todo el trabajo pesado, sandboxing y variables de entorno al motor central
+                    # 1. BLOQUEAR EL CIERRE DEL HUB
                     main_window = self.window()
                     if hasattr(main_window, 'registrar_instancia'):
-                        main_window.registrar_instancia(True)
+                        main_window.registrar_instancia(True) 
+                        
+                    # 2. PREPARAR ARGUMENTOS PARA EL WORKER
+                    kwargs = {
+                        "project_root": p_root,
+                        "config_path": conf_path,
+                        "svn_user": vcs_user,
+                        "svn_pwd": vcs_pwd,
+                        "kitsu_user": kitsu_user,
+                        "kitsu_pwd": kitsu_pwd,
+                        "kitsu_host": kitsu_host,
+                        "user_role": "artist",
+                        "task_data": t_data,
+                        "target_file": None,
+                        "status_callback": self.actualizar_status,
+                        "config_factory": self.config_factory
+                    }
+                    
+                    # 3. LANZAR EN HILO SECUNDARIO
+                    self.launch_worker = LaunchTaskWorker(kwargs)
+                    
+                    def on_launch_finished(success, msg):
+                        # 4. LIBERAR EL CIERRE DEL HUB
+                        if hasattr(main_window, 'registrar_instancia'):
+                            main_window.registrar_instancia(False)
+                        self.actualizar_status(msg, "green" if success else "red")
+                        
+                    self.launch_worker.finished_launch.connect(on_launch_finished)
+                    self.launch_worker.start()
 
                 def install_cb(p_root: Path, t_data: dict):
                     self.iniciar_instalacion_fisica(p_root, t_data)

@@ -27,6 +27,16 @@ class SVNAdapter(AbstractVCS):
     def _build_auth_args(self, username: Optional[str], password: Optional[str]) -> List[str]:
         """Builds authentication arguments without caching them on disk."""
         args = ["--non-interactive", "--trust-server-cert"]
+
+        # =========================================================
+        # BYPASS TEMPORAL: Forzar credenciales Dummy en Localhost
+        # =========================================================
+        if "localhost" in self.repo_url:
+            username = "admin"
+            password = "admin123"
+            print("[SVNAdapter] BYPASS: Inyectando credenciales locales de SVN (admin)...")
+        # =========================================================
+
         if username and password:
             args.extend(["--username", username, "--password", password, "--no-auth-cache"])
         return args

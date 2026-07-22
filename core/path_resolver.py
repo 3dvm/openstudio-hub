@@ -78,21 +78,20 @@ class PathResolver:
             task_name = "anim"
         elif "model" in task_name:
             task_name = "model"
-            
+        
+        # NUEVO: Soporte explícito para Tareas de Edición
+        if task_name == "edit" or entity_type == "edit":
+            project_name = task_data.get("project_name", "project").strip().lower().replace(" ", "-")
+            return f"edit/{project_name}-edit.blend"
+
         if entity_type == "shot":
             seq_name = task_data.get("sequence_name", "")
-            if not seq_name or not entity_name:
-                return None
-                
-            # Plantilla: shots/{seq}/{shot}/{shot}-{task}.blend
-            return f"shots/{seq_name}/{entity_name}/{entity_name}-{task_name}.blend"
+            if not seq_name or not entity_name: return None
+            return f"pro/shots/{seq_name}/{entity_name}/{entity_name}-{task_name}.blend"
             
         elif entity_type == "asset":
             asset_type = task_data.get("asset_type_name", "props").lower()
-            if not entity_name:
-                return None
-                
-            # Plantilla: assets/{type}/{asset}/{type}-{asset}-{task}.blend
-            return f"assets/{asset_type}/{entity_name}/{asset_type}-{entity_name}-{task_name}.blend"
+            if not entity_name: return None
+            return f"pro/assets/{asset_type}/{entity_name}/{asset_type}-{entity_name}-{task_name}.blend"
             
         return None
