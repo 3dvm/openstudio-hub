@@ -201,3 +201,73 @@ QPushButton#LinkButton:hover {
     font-size: 10px;
     font-weight: bold;
 }
+/* ======================================================= */
+/* PIPELINE WIZARD COMPONENT                               */
+/* ======================================================= */
+
+QFrame#PipelineWizardCard {
+    background-color: #1E293B; /* Slate 800 */
+    border-radius: 12px;
+    border: 1px solid #334155;
+}
+
+QLabel#WizardHeader {
+    color: #F8FAFC;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+/* --- Nodos (Círculos) --- */
+QLabel#StepNodeCompleted, QLabel#StepNodeActive, QLabel#StepNodePending {
+    border-radius: 22px; /* Hace el círculo perfecto (44x44) */
+    font-size: 16px;
+    font-weight: bold;
+}
+
+QLabel#StepNodeCompleted {
+    background-color: #10B981; /* Verde Esmeralda */
+    color: #0F172A;
+}
+
+QLabel#StepNodeActive {
+    background-color: #3B82F6; /* Azul Eléctrico */
+    color: white;
+    border: 2px solid #60A5FA;
+}
+
+QLabel#StepNodePending {
+    background-color: #334155; /* Slate oscuro */
+    color: #94A3B8;
+}
+
+/* --- Títulos debajo de los Nodos --- */
+QLabel#StepTitleCompleted { color: #10B981; font-weight: bold; }
+QLabel#StepTitleActive { color: #3B82F6; font-weight: bold; }
+QLabel#StepTitlePending { color: #94A3B8; }
+
+/* --- Líneas Conectoras --- */
+QFrame#StepLineCompleted {
+    border-top: 4px solid #10B981; /* Línea gruesa verde */
+    margin: 0px 10px;
+}
+QFrame#StepLinePending {
+    border-top: 4px solid #334155; /* Línea gris inactiva */
+    margin: 0px 10px;
+}
+
+/* --- El Call To Action (Blender Orange) --- */
+QPushButton#OrangeCTA {
+    background-color: #F97316;
+    color: white;
+    font-size: 15px;
+    font-weight: bold;
+    border-radius: 20px; /* Botón tipo píldora */
+    padding: 10px 30px;
+    border: none;
+}
+QPushButton#OrangeCTA:hover {
+    background-color: #EA580C; /* Hover más oscuro */
+}
+QPushButton#OrangeCTA:pressed {
+    background-color: #C2410C;
+}

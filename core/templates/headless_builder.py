@@ -113,54 +113,77 @@ def cargar_plantilla_segura(task_type_name: str = None, app_template: str = None
         # =======================================================
 
 
+# =======================================================
+# FUNCIÓN MAESTRA (Template Method)
+# =======================================================
+def _guardar_entidad_forjada(filepath_str: str, debug_label: str = "ENTIDAD"):
+    """
+    Centraliza la I/O de disco: crea los directorios padres si no existen
+    y ejecuta el guardado síncrono del archivo .blend maestro.
+    """
+    import bpy
+    from pathlib import Path
+    
+    out_path = Path(filepath_str)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Guardado manual forzado (Síncrono y bloqueante)
+    bpy.ops.wm.save_mainfile(filepath=str(out_path), relative_remap=True)
+    print(f"[HeadlessBuilder DEBUG] 💾 GUARDADO DE {debug_label} EXITOSO EN: {out_path}")
+    return out_path
+
+# =======================================================
+# CONSTRUCTORES ESPECÍFICOS (Strategias)
+# =======================================================
+def forjar_storyboard():
+    print("[HeadlessBuilder] Iniciando forjado del Archivo Maestro de Storyboard...")
+    inyectar_parche_proteccion_memoria()
+    
+# 1. Cargamos la plantilla nativa de Blender para Storyboard (2D Animation)
+    try:
+        print("[HeadlessBuilder] 🎬 Cargando plantilla nativa 'Storyboarding'...")
+        #bpy.ops.wm.read_homefile(app_template="2D_Animation")
+        cargar_plantilla_segura(app_template="Storyboarding")
+    except Exception as e:
+        print(f"[HeadlessBuilder] ⚠️ Plantilla Storyboarding no encontrada, usando default. Error: {e}")
+        bpy.ops.wm.read_homefile()
+        
+    try:
+        from pathlib import Path
+        
+        # 2. Extraer contexto inyectado por el Hub
+        project_root = Path(os.environ.get("OPENSTUDIO_PROJECT_ROOT", ""))
+        vfs_svn = os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "svn")
+        seq_name = os.environ.get("OPENSTUDIO_TARGET_SEQUENCE", "SQ000").lower()
+        
+        # 3. Construir la ruta (En la carpeta de edición, tal como lo definimos)
+        # Formato esperado: pro/edit/{seq_name}-storyboard.blend
+        out_path = project_root / vfs_svn / "edit" / "storyboards" / f"{seq_name}-storyboard.blend"
+        
+        # 4. Guardado manual forzado (Síncrono y bloqueante)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        bpy.ops.wm.save_mainfile(filepath=str(out_path), relative_remap=True)
+        
+        print(f"[HeadlessBuilder DEBUG] 💾 GUARDADO FORZADO EXITOSO EN: {out_path}")
+        
+    except Exception as e:
+        print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el archivo de Storyboard: {e}")
+
 def forjar_edit_master():
     print("[HeadlessBuilder] Iniciando forjado del Archivo Maestro de Edición...")
     inyectar_parche_proteccion_memoria()
-    cargar_plantilla_segura(app_template="Storyboarding")
+    cargar_plantilla_segura(app_template="Video Editing")
     
     try:
         bpy.ops.kitsu.create_edit_file(create_kitsu_edit=True, save_file=False)
         print("[HeadlessBuilder] ✓ Archivo Maestro de Edición configurado en memoria por Kitsu.")
 
-        # 2. Extraemos la ruta final calculada por Kitsu
         import sys
-        from pathlib import Path
         kitsu_module = sys.modules.get("bl_ext.user_default.blender_kitsu") or sys.modules.get("blender_kitsu")
         edit_entity = kitsu_module.cache.edit_default_get(episode_id=bpy.context.scene.kitsu.episode_active_id)
         filepath_str = edit_entity.get_filepath(bpy.context)
         
-        # 3. Guardado manual forzado (Síncrono y bloqueante)
-        out_path = Path(filepath_str)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        bpy.ops.wm.save_mainfile(filepath=str(out_path), relative_remap=True)
-        
-        print(f"[HeadlessBuilder DEBUG] 💾 GUARDADO FORZADO EXITOSO EN: {out_path}")
-
-
-        # =======================================================
-        # DIAGNÓSTICO: Radar de archivos para localizar el .blend
-        # =======================================================
-        print("\n[HeadlessBuilder DEBUG] Buscando dónde se guardó el archivo Edit...")
-        import os
-        from pathlib import Path
-        
-        # Subimos dos niveles desde el sandbox (test1/local/blender_data -> test1)
-        sandbox_path = Path(os.environ.get("BLENDER_USER_RESOURCES", ""))
-        if sandbox_path.exists():
-            project_path = sandbox_path.parent.parent
-            print(f"[HeadlessBuilder DEBUG] Escaneando recursivamente: {project_path}")
-            
-            # Buscar cualquier archivo que termine en -edit-v<numero>.blend
-            found_files = list(project_path.rglob("*-edit-v*.blend"))
-            
-            if found_files:
-                for f in found_files:
-                    print(f"[HeadlessBuilder DEBUG] ⚠️ ARCHIVO EXISTE EN: {f}")
-            else:
-                print("[HeadlessBuilder DEBUG] ❌ EL ARCHIVO NO SE CREÓ EN NINGÚN LUGAR DEL PROYECTO.")
-        print("-" * 50 + "\n")
-        # =======================================================
-
+        _guardar_entidad_forjada(filepath_str, "EDIT MASTER")
     except Exception as e:
         print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el archivo Edit: {e}")
 
@@ -169,24 +192,17 @@ def forjar_shot():
     inyectar_parche_proteccion_memoria()
     
     try:
+        import sys
         kitsu_module = sys.modules.get("bl_ext.user_default.blender_kitsu") or sys.modules.get("blender_kitsu")
         task_type = kitsu_module.cache.task_type_active_get()
         cargar_plantilla_segura(task_type_name=task_type.name)
 
-        # 1. Configurar Shot en memoria
         bpy.ops.kitsu.build_new_shot(save_file=False)
         
-        # 2. Extraer ruta
-        from pathlib import Path
         shot = kitsu_module.cache.shot_active_get()
         filepath_str = shot.get_filepath(bpy.context, task_type.get_short_name())
         
-        # 3. Guardado manual
-        out_path = Path(filepath_str)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        bpy.ops.wm.save_mainfile(filepath=str(out_path), relative_remap=True)
-        
-        print(f"[HeadlessBuilder DEBUG] 💾 GUARDADO DE SHOT EXITOSO EN: {out_path}")
+        _guardar_entidad_forjada(filepath_str, "SHOT")
     except Exception as e:
         print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el Shot: {e}")
 
@@ -196,38 +212,29 @@ def forjar_asset():
     
     try:
         cargar_plantilla_segura(task_type_name="Asset")
-        
-        # 1. Configurar Asset en memoria
         bpy.ops.kitsu.build_new_asset(save_file=False)
         
-        # 2. Extraer ruta
         import sys
-        from pathlib import Path
         kitsu_module = sys.modules.get("bl_ext.user_default.blender_kitsu") or sys.modules.get("blender_kitsu")
         asset = kitsu_module.cache.asset_active_get()
         filepath_str = asset.get_filepath(bpy.context)
         
-        # 3. Guardado manual
-        out_path = Path(filepath_str)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        bpy.ops.wm.save_mainfile(filepath=str(out_path), relative_remap=True)
-        
-        print(f"[HeadlessBuilder DEBUG] 💾 GUARDADO DE ASSET EXITOSO EN: {out_path}")
+        _guardar_entidad_forjada(filepath_str, "ASSET")
     except Exception as e:
         print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el Asset: {e}")
 
-
+# =======================================================
+# MAIN ORCHESTRATOR
+# =======================================================
 def main():
     print("\n" + "="*50)
     print("[OPENSTUDIO HUB] Iniciando Constructor Headless...")
     
-    # Extraemos el objetivo de construcción desde el orquestador Python
-    build_target = os.environ.get("OPENSTUDIO_BUILD_TARGET", "EDIT").upper()
+    build_target = os.environ.get("OPENSTUDIO_BUILD_TARGET", "STORYBOARD").upper()
     
-    # Validamos que el Hub haya inyectado y logueado Kitsu previamente
-    # (El Hub asume que las credenciales y el ID del proyecto ya están en RAM).
-    
-    if build_target == "EDIT":
+    if build_target == "STORYBOARD":
+        forjar_storyboard()
+    elif build_target == "EDIT":
         forjar_edit_master()
     elif build_target == "SHOT":
         forjar_shot()
@@ -239,7 +246,6 @@ def main():
     print("[OPENSTUDIO HUB] Constructor Headless Finalizado.")
     print("="*50 + "\n")
     
-    # Obligamos a Blender a cerrarse limpio tras ejecutar el trabajo en background
     sys.exit(0)
 
 if __name__ == "__main__":

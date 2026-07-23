@@ -78,6 +78,15 @@ class PathResolver:
             task_name = "anim"
         elif "model" in task_name:
             task_name = "model"
+
+        # NUEVO: Soporte explícito para Storyboard (Entidad Secuencia)
+        if entity_type == "sequence" or task_name == "storyboard":
+            # Para las secuencias, 'entity_name' es el nombre de la secuencia (ej: '01' o 'sq010')
+            seq_name = task_data.get("entity_name", task_data.get("sequence_name", "")).lower()
+            if not seq_name: return None
+            
+            # Leemos la ruta que el HeadlessBuilder forjó (Regla estricta de Topología)
+            return f"edit/storyboards/{seq_name}-storyboard.blend"
         
         # NUEVO: Soporte explícito para Tareas de Edición
         if task_name == "edit" or entity_type == "edit":

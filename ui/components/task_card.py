@@ -21,9 +21,10 @@ import requests
 from pathlib import Path
 
 from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QLabel, 
-                               QPushButton, QSizePolicy)
+                               QPushButton, QSizePolicy, QStackedWidget,
+                               QWidget)
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QPixmap, QImage
+from PySide6.QtGui import QPixmap, QImage, QPainter, QColor, QIcon
 
 
 class ThumbnailWorker(QThread):
@@ -143,19 +144,84 @@ class TaskCard(QFrame):
         # ---------------------------------------------------------
         # Fila Central: Thumbnail Cinematográfico
         # ---------------------------------------------------------
-        self.thumb_frame = QFrame(self)
-        self.thumb_frame.setFixedHeight(160)
-        self.thumb_frame.setStyleSheet("background-color: #0B1120; border-radius: 8px;") 
+        # self.thumb_frame = QFrame(self)
+        # self.thumb_frame.setFixedHeight(160)
+        # self.thumb_frame.setStyleSheet("background-color: #0B1120; border-radius: 8px;") 
+        #
+        # thumb_layout = QVBoxLayout(self.thumb_frame)
+        # thumb_layout.setContentsMargins(5, 5, 5, 5)
+        #
+        # self.thumb_label = QLabel(self.tr("No Thumbnail Available"))
+        # self.thumb_label.setObjectName("PlaceholderText")
+        # self.thumb_label.setAlignment(Qt.AlignCenter)
+        # self.thumb_label.setStyleSheet("color: #475569; font-style: italic; font-size: 12px;")
+        # thumb_layout.addWidget(self.thumb_label)
+        # main_layout.addWidget(self.thumb_frame)
+
+        # 2. Miniatura Dinámica (QStackedWidget)
+        self.thumb_stack = QStackedWidget()
+        self.thumb_stack.setFixedHeight(140)
+        self.thumb_stack.setStyleSheet("QStackedWidget { background-color: #0F172A; border-radius: 8px; border: 1px solid #1E293B; }")
         
-        thumb_layout = QVBoxLayout(self.thumb_frame)
-        thumb_layout.setContentsMargins(5, 5, 5, 5)
+        # --- Página 0: Placeholder Inteligente ---
+        self.page_placeholder = QWidget()
+        placeholder_layout = QVBoxLayout(self.page_placeholder)
+        placeholder_layout.setAlignment(Qt.AlignCenter)
+        placeholder_layout.setSpacing(10)
         
-        self.thumb_label = QLabel(self.tr("No Thumbnail Available"))
-        self.thumb_label.setObjectName("PlaceholderText")
+        self.lbl_placeholder_icon = QLabel()
+        self.lbl_placeholder_icon.setAlignment(Qt.AlignCenter)
+        
+        # Resolver nombre de tarea a SVG
+        task_type = self.task_data.get("task_type_name", "generic").lower()
+        
+        icon_map = {
+            "storyboard": "task-storyboard.svg",
+            "layout": "task-layout.svg",
+            "modeling": "task-modeling.svg",
+            "rigging": "task-rigging.svg",
+            "animation": "task-animation.svg",
+            "lighting": "task-lighting.svg",
+            "compositing": "task-compositing.svg",
+            "editorial": "task-editorial.svg",
+            "edit": "task-editorial.svg"
+        }
+        
+        svg_filename = icon_map.get(task_type, "task-generic.svg")
+        icon_path = Path(f"assets/icons/{svg_filename}")
+        
+        if icon_path.exists():
+            base_pixmap = QIcon(str(icon_path)).pixmap(55, 55)
+            painter = QPainter(base_pixmap)
+            painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+            painter.fillRect(base_pixmap.rect(), QColor("#64748B"))
+            painter.end()
+            self.lbl_placeholder_icon.setPixmap(base_pixmap)
+        else:
+            self.lbl_placeholder_icon.setText("⚙️")
+            self.lbl_placeholder_icon.setStyleSheet("font-size: 40px; background: transparent; color: #64748B;")
+            
+        # Formatear el texto (ej: "ANIMATION PLACEHOLDER")
+        safe_task_name = self.task_data.get("task_type_name", "TASK").upper()
+        self.lbl_placeholder_text = QLabel(self.tr(f"{safe_task_name} TASK"))
+        self.lbl_placeholder_text.setAlignment(Qt.AlignCenter)
+        self.lbl_placeholder_text.setStyleSheet("color: #64748B; font-size: 10px; font-weight: bold; letter-spacing: 1px; background: transparent;")
+        
+        placeholder_layout.addStretch()
+        placeholder_layout.addWidget(self.lbl_placeholder_icon)
+        placeholder_layout.addWidget(self.lbl_placeholder_text)
+        placeholder_layout.addStretch()
+        
+        # --- Página 1: Imagen Real ---
+        self.thumb_label = QLabel()
         self.thumb_label.setAlignment(Qt.AlignCenter)
-        self.thumb_label.setStyleSheet("color: #475569; font-style: italic; font-size: 12px;")
-        thumb_layout.addWidget(self.thumb_label)
-        main_layout.addWidget(self.thumb_frame)
+        self.thumb_label.setStyleSheet("border-radius: 8px; background-color: transparent;")
+        
+        self.thumb_stack.addWidget(self.page_placeholder)
+        self.thumb_stack.addWidget(self.thumb_label)
+        
+        main_layout.addWidget(self.thumb_stack)
+
 
         # ---------------------------------------------------------
         # Fila Inferior: Botones de Acción Modulares
@@ -236,11 +302,10 @@ class TaskCard(QFrame):
             pixmap = pixmap.scaled(self.thumb_frame.width(), self.thumb_frame.height(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.thumb_label.setPixmap(pixmap)
             self.thumb_label.setText("") 
+
+            self.thumb_stack.setCurrentIndex(1)
         else:
             self._on_thumbnail_error(self.tr("Corrupted image format"))
 
     def _on_thumbnail_error(self, message: str):
-        if "No Thumbnail" in message or "not found" in message:
-            self.thumb_label.setText(self.tr("No Thumbnail Available"))
-        else:
-            self.thumb_label.setText(message)
+        self.thumb_stack.setCurrentIndex(0)

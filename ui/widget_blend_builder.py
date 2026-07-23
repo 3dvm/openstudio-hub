@@ -3,67 +3,18 @@
 # Módulo: ui/widget_blend_builder.py
 # Rol Arquitectónico: UI Component / Batch Entity Genesis Tool
 # =========================================================================================
-# Copyright (c) 2026 Ernesto Del Valle Macuare. Todos los derechos reservados.
-# Licencia: GNU General Public License v3.0 (GPLv3)
-#
-# Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 1.0.0
-# =========================================================================================
 
-import gazu
 from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QLabel, 
                                QPushButton, QTableWidget, QTableWidgetItem, 
                                QHeaderView, QWidget, QAbstractItemView,
-                               QComboBox, QMessageBox)
-from PySide6.QtCore import Qt, QThread, Signal
+                               QComboBox, QMessageBox, QStackedWidget, QListWidget, QLineEdit)
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 
 from core.production_manager import ProductionManager
-
-class FetchProjectsWorker(QThread):
-    data_ready = Signal(list)
-    error_occurred = Signal(str)
-
-    def run(self):
-        try:
-            self.data_ready.emit(gazu.project.all_open_projects())
-        except Exception as e:
-            self.error_occurred.emit(str(e))
-
-class FetchEntitiesWorker(QThread):
-    data_ready = Signal(list)
-    error_occurred = Signal(str)
-
-    def __init__(self, pm_core, project_id):
-        super().__init__()
-        self.pm_core = pm_core
-        self.project_id = project_id
-
-    def run(self):
-        try:
-            self.data_ready.emit(self.pm_core.get_pending_entities(self.project_id))
-        except Exception as e:
-            self.error_occurred.emit(str(e))
-
-class BatchCreationWorker(QThread):
-    finished_batch = Signal(bool, str)
-
-    def __init__(self, pm_core, p_name, entities, template, task_types, status_cb):
-        super().__init__()
-        self.pm_core = pm_core
-        self.p_name = p_name
-        self.entities = entities
-        self.template = template
-        self.task_types = task_types
-        self.status_cb = status_cb
-
-    def run(self):
-        try:
-            succ, msg = self.pm_core.batch_create_entity_files(
-                self.p_name, self.entities, self.template, self.task_types, self.status_cb)
-            self.finished_batch.emit(succ, msg)
-        except Exception as e:
-            self.finished_batch.emit(False, str(e))
-
+from ui.components.pipeline_wizard import PipelineWizardWidget
+from ui.workers.spawning_workers import (FetchProjectsWorker, FetchEntitiesWorker, BatchCreationWorker,
+                                         MasterSpawningWorker, StoryboardBatchWorker, SpawningProgressDialog)
 
 class WidgetBlendBuilder(QFrame):
     def __init__(self, parent, auth_manager, config_factory, status_callback, **kwargs):
@@ -87,23 +38,74 @@ class WidgetBlendBuilder(QFrame):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(20)
 
-        # Header Interno
-        header_layout = QVBoxLayout()
-        header_layout.setSpacing(5)
-        lbl_title = QLabel(self.tr("Batch Entity Creation"))
-        lbl_title.setObjectName("PageTitle")
-        header_layout.addWidget(lbl_title)
+        # --- 1. SELECTOR DE PROYECTO ---
+        project_layout = QHBoxLayout()
+        lbl_proj = QLabel(self.tr("Active Project:"))
+        lbl_proj.setObjectName("InputLabel")
         
-        lbl_desc = QLabel(self.tr("Review approved editorial sequences and assets from Kitsu. Click 'Create .blends' to automatically generate their physical files and VCS directory structures."))
-        lbl_desc.setObjectName("PageDescription")
-        lbl_desc.setWordWrap(True)
-        header_layout.addWidget(lbl_desc)
-        main_layout.addLayout(header_layout)
+        self.combo_projects = QComboBox()
+        self.combo_projects.setObjectName("StandardComboBox")
+        self.combo_projects.setFixedSize(250, 35)
+        self.combo_projects.currentIndexChanged.connect(self._on_project_changed)
+        
+        project_layout.addWidget(lbl_proj)
+        project_layout.addWidget(self.combo_projects)
+        project_layout.addStretch()
+        main_layout.addLayout(project_layout)
 
-        # Controls & KPI
+        # --- 2. PIPELINE WIZARD (Top Section) ---
+        self.wizard = PipelineWizardWidget(self)
+        self.wizard.action_requested.connect(self._ejecutar_fase_pipeline)
+        main_layout.addWidget(self.wizard)
+
+        # --- 3. STACKED WIDGET (Panel Dinámico Inferior) ---
+        self.stack = QStackedWidget()
+        
+        # PÁGINA 0: BREAKDOWN MANUAL DE STORYBOARD
+        self.page_storyboard = QWidget()
+        sb_layout = QVBoxLayout(self.page_storyboard)
+        sb_layout.setContentsMargins(0, 0, 0, 0)
+        
+        lbl_sb_desc = QLabel(self.tr("Enter the sequences (e.g. SQ010) identified during the script breakdown. This will register them in Kitsu and spawn their physical .blend files."))
+        lbl_sb_desc.setObjectName("PageDescription")
+        lbl_sb_desc.setWordWrap(True)
+        sb_layout.addWidget(lbl_sb_desc)
+
+        input_layout = QHBoxLayout()
+        self.input_seq = QLineEdit()
+        self.input_seq.setObjectName("FormInput")
+        self.input_seq.setPlaceholderText(self.tr("Enter Sequence Name (e.g. SQ010) and press Enter"))
+        self.input_seq.setFixedSize(300, 35)
+        self.input_seq.returnPressed.connect(self._add_sequence_to_list)
+        
+        self.btn_add_seq = QPushButton(self.tr("Add"))
+        self.btn_add_seq.setObjectName("SecondaryButton")
+        self.btn_add_seq.setFixedSize(80, 35)
+        self.btn_add_seq.clicked.connect(self._add_sequence_to_list)
+        
+        input_layout.addWidget(self.input_seq)
+        input_layout.addWidget(self.btn_add_seq)
+        input_layout.addStretch()
+        sb_layout.addLayout(input_layout)
+        
+        self.list_sequences = QListWidget()
+        self.list_sequences.setObjectName("FormInput") 
+        sb_layout.addWidget(self.list_sequences)
+        
+        self.btn_clear_seq = QPushButton(self.tr("Clear List"))
+        self.btn_clear_seq.setObjectName("LinkButton")
+        self.btn_clear_seq.setCursor(Qt.PointingHandCursor)
+        self.btn_clear_seq.clicked.connect(self.list_sequences.clear)
+        sb_layout.addWidget(self.btn_clear_seq, alignment=Qt.AlignRight)
+        
+        self.stack.addWidget(self.page_storyboard)
+
+        # PÁGINA 1: TABLA KANBAN (Edición, Assets, Shots)
+        self.page_entities = QWidget()
+        ent_layout = QVBoxLayout(self.page_entities)
+        ent_layout.setContentsMargins(0, 0, 0, 0)
+        
         controls_layout = QHBoxLayout()
-        controls_layout.setSpacing(15)
-
         self.lbl_kpi_total = self._create_kpi_label(self.tr("Total Entries: 0"))
         self.lbl_kpi_shots = self._create_kpi_label(self.tr("Shots: 0"))
         self.lbl_kpi_assets = self._create_kpi_label(self.tr("Assets: 0"))
@@ -112,27 +114,13 @@ class WidgetBlendBuilder(QFrame):
         controls_layout.addWidget(self.lbl_kpi_shots)
         controls_layout.addWidget(self.lbl_kpi_assets)
         controls_layout.addStretch()
-
-        self.combo_projects = QComboBox()
-        self.combo_projects.setObjectName("StandardComboBox")
-        self.combo_projects.setFixedSize(200, 35)
-        self.combo_projects.currentIndexChanged.connect(self._on_project_changed)
-        controls_layout.addWidget(self.combo_projects)
-
+        
         self.combo_templates = QComboBox()
         self.combo_templates.setObjectName("StandardComboBox")
         self.combo_templates.setFixedSize(200, 35)
         controls_layout.addWidget(self.combo_templates)
+        ent_layout.addLayout(controls_layout)
 
-        self.btn_create_files = QPushButton(self.tr("Create .blends"))
-        self.btn_create_files.setObjectName("PrimaryButton")
-        self.btn_create_files.setFixedSize(140, 35)
-        self.btn_create_files.setCursor(Qt.PointingHandCursor)
-        self.btn_create_files.clicked.connect(self._trigger_batch_creation)
-        controls_layout.addWidget(self.btn_create_files)
-        main_layout.addLayout(controls_layout)
-
-        # Data Grid
         self.table = QTableWidget(0, 6)
         self.table.setObjectName("DataGrid")
         self.table.setHorizontalHeaderLabels(["", self.tr("Entity Name"), self.tr("Type"), self.tr("Parent Sequence"), self.tr("Frame Range"), self.tr("Kitsu Status")])
@@ -150,8 +138,12 @@ class WidgetBlendBuilder(QFrame):
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
 
-        main_layout.addWidget(self.table, stretch=1)
+        ent_layout.addWidget(self.table, stretch=1)
+        self.stack.addWidget(self.page_entities)
+        
+        main_layout.addWidget(self.stack, stretch=1)
 
+    # --- UI HELPERS ---
     def _create_kpi_label(self, text: str) -> QLabel:
         lbl = QLabel(text)
         lbl.setObjectName("KPILabel")
@@ -168,6 +160,20 @@ class WidgetBlendBuilder(QFrame):
         layout.addWidget(lbl)
         return widget
 
+    def advance_wizard(self, step_number: int):
+        self.wizard.set_step(step_number)
+        self.stack.setCurrentIndex(0 if step_number == 1 else 1)
+
+    def _add_sequence_to_list(self):
+        seq_name = self.input_seq.text().strip().upper()
+        if not seq_name: return
+        existing = [self.list_sequences.item(i).text() for i in range(self.list_sequences.count())]
+        if seq_name not in existing:
+            self.list_sequences.addItem(seq_name)
+        self.input_seq.clear()
+        self.input_seq.setFocus()
+
+    # --- NETWORK / I/O LOGIC ---
     def _load_projects_from_kitsu(self):
         self.combo_projects.blockSignals(True)
         self.combo_projects.addItem(self.tr("Loading projects..."))
@@ -205,14 +211,13 @@ class WidgetBlendBuilder(QFrame):
         project_name = self.combo_projects.currentText()
         if project_name in self.project_map:
             self.current_project_id = self.project_map[project_name]
+            self.advance_wizard(1) # Forzar paso 1 al cambiar de proyecto
             self.load_entities_from_kitsu()
 
     def load_entities_from_kitsu(self):
         if not self.current_project_id: return
-            
         self.status_callback(self.tr("Fetching pending entities from Kitsu..."), "yellow")
         self.table.setRowCount(0)
-        self.btn_create_files.setEnabled(False)
         
         self.worker_entities = FetchEntitiesWorker(self.pm_core, self.current_project_id)
         self.worker_entities.data_ready.connect(self._render_entities)
@@ -241,34 +246,94 @@ class WidgetBlendBuilder(QFrame):
             parent_item = QTableWidgetItem(entity.get("parent", "Unknown"))
             self.table.setItem(row, 3, parent_item)
             self.table.setItem(row, 4, QTableWidgetItem(str(entity.get("frame_in", 0))))
-            
-            status_item = QTableWidgetItem(entity.get("status", "Unknown"))
-            self.table.setItem(row, 5, status_item)
+            self.table.setItem(row, 5, QTableWidgetItem(entity.get("status", "Unknown")))
 
         self.lbl_kpi_total.setText(self.tr(f"Total Entries: {len(entities)}"))
         self.lbl_kpi_shots.setText(self.tr(f"Shots: {shots_count}"))
         self.lbl_kpi_assets.setText(self.tr(f"Assets: {assets_count}"))
         
-        self.btn_create_files.setEnabled(True)
-        self.status_callback(self.tr("✓ Entities loaded. Select the items you want to physicalize."), "green")
+        self.status_callback(self.tr("✓ Entities loaded."), "green")
+
+    # --- ENRUTADOR PRINCIPAL ---
+    def _ejecutar_fase_pipeline(self, step_id: int):
+        if not self.current_project_id:
+            self.status_callback(self.tr("Please select a project first."), "yellow")
+            return
+
+        if step_id == 1:
+            if self.input_seq.text().strip():
+                self._add_sequence_to_list()
+                
+            sequences = [self.list_sequences.item(i).text() for i in range(self.list_sequences.count())]
+            if not sequences:
+                QMessageBox.warning(self, self.tr("Empty List"), self.tr("Please add at least one sequence to spawn."))
+                return
+                
+            self.status_callback(self.tr("Spawning Storyboard sequences..."), "yellow")
+            project_name = self.combo_projects.currentText()
+            self.progress_modal = SpawningProgressDialog(self, self.tr("Batch Spawning Storyboards"))
+            self.progress_modal.show()
+            
+            self.spawn_worker = StoryboardBatchWorker(self.pm_core, self.config_factory, self.current_project_id, project_name, sequences)
+            self.spawn_worker.progress_updated.connect(self.progress_modal.update_progress)
+            self.spawn_worker.log_stream.connect(self.progress_modal.append_log)
+            
+            def open_kitsu():
+                kitsu_url = self.config_factory.get_kitsu_api_url().replace("/api", "")
+                url = f"{kitsu_url}/productions/{self.current_project_id}/shots"
+                QDesktopServices.openUrl(QUrl(url))
+                self.progress_modal.accept()
+
+            def on_sb_finished(success, msg):
+                if success:
+                    self.status_callback(self.tr(f"✓ {msg}"), "green")
+                    self.list_sequences.clear()
+                    self.advance_wizard(2)
+                    self.progress_modal.finalize(True, self.tr("Success: Storyboards spawned."), "Assign Artists in Kitsu", open_kitsu)
+                else:
+                    self.status_callback(self.tr(f"✗ Error: {msg}"), "red")
+                    self.progress_modal.finalize(False, self.tr("Process completed with errors. Check logs."))
+
+            self.spawn_worker.finished_batch.connect(on_sb_finished)
+            self.spawn_worker.start()
+            
+        elif step_id == 2:
+            project_name = self.combo_projects.currentText()
+            self.progress_modal = SpawningProgressDialog(self, self.tr("Spawning EDIT Master"))
+            self.progress_modal.show()
+            
+            self.spawn_worker = MasterSpawningWorker(self.config_factory, project_name, "EDIT")
+            self.spawn_worker.progress_updated.connect(self.progress_modal.update_progress)
+            self.spawn_worker.log_stream.connect(self.progress_modal.append_log)
+            
+            def on_finished(success, msg):
+                if success:
+                    self.status_callback(self.tr(f"✓ {msg}"), "green")
+                    self.advance_wizard(3)
+                    self.progress_modal.finalize(True, self.tr("Success: EDIT Master forged."))
+                else:
+                    self.status_callback(self.tr(f"✗ Error: {msg}"), "red")
+                    self.progress_modal.finalize(False, self.tr("Process completed with errors. Check logs."))
+                    
+            self.spawn_worker.finished_spawn.connect(on_finished)
+            self.spawn_worker.start()
+
+        elif step_id in [3, 4]:
+            self.status_callback(self.tr("Batch Creating Entities..."), "yellow")
+            self._trigger_batch_creation()
 
     def _trigger_batch_creation(self):
         selected_entities = [self.table.item(r, 0).data(Qt.UserRole) for r in range(self.table.rowCount()) if self.table.item(r, 0).checkState() == Qt.Checked]
-
         if not selected_entities:
             self.status_callback(self.tr("No entities selected for file creation."), "yellow")
             return
             
         template_name = self.combo_templates.currentText()
         if template_name.startswith("--"):
-            QMessageBox.warning(self, self.tr("Missing Template"), self.tr("You must select a valid base .blend template from the Vault."))
+            QMessageBox.warning(self, self.tr("Missing Template"), self.tr("Select a valid base .blend template."))
             return
 
-        self.btn_create_files.setEnabled(False)
-        self.combo_projects.setEnabled(False)
-        
         self.status_callback(self.tr("Initializing batch creation for {0} entities...").format(len(selected_entities)), "yellow")
-        
         self.worker_batch = BatchCreationWorker(
             pm_core=self.pm_core,
             p_name=self.combo_projects.currentText(),
@@ -281,9 +346,6 @@ class WidgetBlendBuilder(QFrame):
         self.worker_batch.start()
 
     def _on_batch_finished(self, success: bool, message: str):
-        self.btn_create_files.setEnabled(True)
-        self.combo_projects.setEnabled(True)
-        
         if success:
             self.status_callback(self.tr("✓ {0}").format(message), "green")
             self.load_entities_from_kitsu()

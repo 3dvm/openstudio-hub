@@ -18,18 +18,13 @@ Integra ganchos (hooks) de auto-recarga tras operaciones destructivas.
 """
 
 from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QGridLayout, 
-                               QLabel, QPushButton, QScrollArea, QWidget, QSizePolicy)
+                               QLabel, QPushButton, QScrollArea, QWidget)
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QResizeEvent
 from pathlib import Path
 
 from ui.window_new_project import NewProjectWindow
-
-try:
-    from ui.components.project_card import ProjectCard
-except ImportError:
-    ProjectCard = None
-
+from ui.components.project_card import ProjectCard
 
 class ProjectGridWorker(QThread):
     """Hilo secundario para extraer los proyectos abiertos del estudio desde Kitsu."""
@@ -50,7 +45,8 @@ class ProjectGridWorker(QThread):
 
 
 class ProjectListWidget(QFrame):
-    def __init__(self, parent, nextcloud_dir: Path, auth_manager, vault_manager, config_factory, status_callback, **kwargs):
+    def __init__(self, parent, nextcloud_dir: Path, auth_manager, vault_manager, config_factory, 
+                 status_callback, on_open_wizard_callback=None, **kwargs):
         super().__init__(parent, **kwargs)
         
         self.nextcloud_dir = nextcloud_dir
@@ -58,11 +54,15 @@ class ProjectListWidget(QFrame):
         self.vault = vault_manager
         self.config_factory = config_factory
         self.status_callback = status_callback
+        self.on_open_wizard_callback = on_open_wizard_callback
+        
+        self.user_role = self.auth.get_user_role() if hasattr(self.auth, 'get_user_role') else "user"
         
         self._project_widgets = []
         self._current_cols = 0
         
         self.setObjectName("ProjectListWidgetBase")
+        self.setStyleSheet("background: transparent;")
         
         self._build_ui()
 
@@ -77,7 +77,11 @@ class ProjectListWidget(QFrame):
         hero_layout = QHBoxLayout()
         hero_layout.setContentsMargins(0, 0, 0, 0)
         
-        # El stretch empuja los botones a la derecha para no ocupar todo el ancho
+        if self.user_role != "td":
+            lbl_title = QLabel(self.tr("My Assigned Projects"))
+            lbl_title.setObjectName("H2Title")
+            hero_layout.addWidget(lbl_title)
+            
         hero_layout.addStretch()
         
         self.btn_refrescar = QPushButton(self.tr("🔄 Refresh List"))
@@ -86,13 +90,16 @@ class ProjectListWidget(QFrame):
         self.btn_refrescar.setCursor(Qt.PointingHandCursor)
         self.btn_refrescar.clicked.connect(self.cargar_proyectos)
         hero_layout.addWidget(self.btn_refrescar)
+
+        # breakpoint()
         
-        self.btn_nuevo_proy = QPushButton(self.tr("+ Create New Project"))
-        self.btn_nuevo_proy.setObjectName("PrimaryButton") 
-        self.btn_nuevo_proy.setFixedSize(220, 40)
-        self.btn_nuevo_proy.setCursor(Qt.PointingHandCursor)
-        self.btn_nuevo_proy.clicked.connect(self.abrir_wizard_proyecto)
-        hero_layout.addWidget(self.btn_nuevo_proy)
+        if self.user_role == "td":
+            self.btn_nuevo_proy = QPushButton(self.tr("+ Create New Project"))
+            self.btn_nuevo_proy.setObjectName("PrimaryButton") 
+            self.btn_nuevo_proy.setFixedSize(220, 40)
+            self.btn_nuevo_proy.setCursor(Qt.PointingHandCursor)
+            self.btn_nuevo_proy.clicked.connect(self.abrir_wizard_proyecto)
+            hero_layout.addWidget(self.btn_nuevo_proy)
         
         content_layout.addLayout(hero_layout)
 
@@ -102,9 +109,11 @@ class ProjectListWidget(QFrame):
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setObjectName("InvisibleScrollArea")
+        self.scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         
         self.grid_widget = QWidget()
         self.grid_widget.setObjectName("TransparentGridContainer")
+        self.grid_widget.setStyleSheet("background: transparent;")
         self.grid_layout = QGridLayout(self.grid_widget)
         self.grid_layout.setSpacing(15)  
         self.grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
@@ -121,18 +130,13 @@ class ProjectListWidget(QFrame):
         self._rearrange_grid()
 
     def _rearrange_grid(self):
-        if not self._project_widgets:
-            return
-
+        if not self._project_widgets: return
         viewport_width = self.scroll_area.viewport().width()
-        card_width = 320 
+        card_width = 340 if self.user_role != "td" else 320 
         spacing = self.grid_layout.spacing()
-        
         cols = max(1, (viewport_width + spacing) // (card_width + spacing))
 
-        if getattr(self, '_current_cols', 0) == cols:
-            return
-
+        if getattr(self, '_current_cols', 0) == cols: return
         self._current_cols = cols
         row, col = 0, 0
 
@@ -150,11 +154,11 @@ class ProjectListWidget(QFrame):
     # ---------------------------------------------------------
 
     def _emit_status(self, mensaje: str, color: str = "white"):
-        if self.status_callback:
-            self.status_callback(mensaje, color)
+        if self.status_callback: self.status_callback(mensaje, color)
 
     def cargar_proyectos(self):
-        self._emit_status(self.tr("Fetching projects catalog from server..."), "yellow")
+        self._emit_status(self.tr("Syncing projects catalog..."), "yellow")
+        self.btn_refrescar.setEnabled(False)
         
         for widget in self._project_widgets:
             widget.hide()
@@ -163,8 +167,7 @@ class ProjectListWidget(QFrame):
         
         while self.grid_layout.count():
             child = self.grid_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+            if child.widget(): child.widget().deleteLater()
                 
         self.worker = ProjectGridWorker(self.auth)
         self.worker.data_ready.connect(self._renderizar_proyectos)
@@ -172,25 +175,25 @@ class ProjectListWidget(QFrame):
         self.worker.start()
 
     def _renderizar_proyectos(self, proyectos: list):
+        self.btn_refrescar.setEnabled(True)
         if not proyectos:
-            self._emit_status(self.tr("No open projects found in Kitsu."), "yellow")
+            self._emit_status(self.tr("No active projects found."), "yellow")
             return
             
         self._emit_status(self.tr("🟢 Synchronized: {0} active projects.").format(len(proyectos)), "green")
         
         for project_data in proyectos:
-            if ProjectCard:
-                tarjeta = ProjectCard(
-                    parent=self.grid_widget,
-                    project_data=project_data,
-                    auth_manager=self.auth,
-                    nextcloud_dir=self.nextcloud_dir,
-                    on_rebuild_callback=self.cargar_proyectos  # Inyección del Hook de recarga
-                )
-            else:
-                tarjeta = QLabel(f"📦 {project_data.get('name', 'Unknown')}")
-                tarjeta.setObjectName("ProjectCardFallback")
-                tarjeta.setFixedSize(320, 280)
+            tarjeta = ProjectCard(
+                parent=self.grid_widget,
+                project_data=project_data,
+                auth_manager=self.auth,
+                nextcloud_dir=self.nextcloud_dir,
+                config_factory=self.config_factory,
+                vault_manager=self.vault,
+                on_rebuild_callback=self.cargar_proyectos,
+                on_open_wizard_callback=self.on_open_wizard_callback,
+                status_callback=self.status_callback
+            )
 
             self._project_widgets.append(tarjeta)
             

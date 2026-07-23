@@ -25,7 +25,17 @@ from PySide6.QtCore import Qt, QThread, Signal
 
 from core.project_builder import ProjectBuilder
 from core.vault_manager import VaultManager
+from core.kitsu_manager import KitsuManager
 
+class FetchKitsuTemplatesWorker(QThread):
+    data_ready = Signal(list)
+    def run(self):
+        try:
+            manager = KitsuManager()
+            self.data_ready.emit(manager.get_all_templates())
+        except Exception as e:
+            print(f"[FetchKitsuTemplatesWorker] Error de red: {e}")
+            self.data_ready.emit([])
 
 class ProjectCreationWorker(QThread):
     """Hilo trabajador para ejecutar la I/O pesada del ProjectBuilder sin congelar la modal."""
@@ -54,7 +64,6 @@ class ProjectCreationWorker(QThread):
             vcs_pwd=self.vcs_pwd
         )
         self.result.emit(exito, mensaje)
-
 
 class NewProjectWindow(QDialog):
     def __init__(self, parent: QWidget, config_factory, on_success_callback):
@@ -90,6 +99,22 @@ class NewProjectWindow(QDialog):
         self.entry_nombre.setPlaceholderText("Nombre (ej. p0004-nuevo-proyecto)")
         self.entry_nombre.setFixedHeight(45)
         main_layout.addWidget(self.entry_nombre)
+
+        # Dropdown de Plantilla Kitsu
+        lbl_kitsu_template = QLabel("Plantilla de Kitsu:")
+        lbl_kitsu_template.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        main_layout.addWidget(lbl_kitsu_template)
+        
+        self.combo_kitsu_template = QComboBox()
+        self.combo_kitsu_template.setFixedHeight(40)
+        self.combo_kitsu_template.setStyleSheet("QComboBox { background-color: #0F172A; border: 1px solid #475569; border-radius: 8px; color: #F8FAFC; padding: 5px; }")
+        self.combo_kitsu_template.addItem("Cargando plantillas...")
+        self.combo_kitsu_template.setEnabled(False)
+        main_layout.addWidget(self.combo_kitsu_template)
+        
+        self.worker_kitsu_templates = FetchKitsuTemplatesWorker()
+        self.worker_kitsu_templates.data_ready.connect(self._on_kitsu_templates_loaded)
+        self.worker_kitsu_templates.start()
 
         lbl_version = QLabel("Versión de Blender Objetivo:")
         lbl_version.setStyleSheet("font-weight: bold; margin-top: 10px;")
@@ -161,6 +186,15 @@ class NewProjectWindow(QDialog):
             self.btn_splash.setEnabled(False)
             self.btn_crear.setEnabled(False)
 
+    def _on_kitsu_templates_loaded(self, templates: list):
+        self.combo_kitsu_template.clear()
+        if not templates:
+            self.combo_kitsu_template.addItem("standard-3d-production")
+        else:
+            for t in templates:
+                self.combo_kitsu_template.addItem(t["name"])
+        self.combo_kitsu_template.setEnabled(True)
+
     def seleccionar_splash(self):
         ruta, _ = QFileDialog.getOpenFileName(self, "Seleccionar Splash Screen", "", "Imágenes PNG (*.png)")
         if ruta:
@@ -223,6 +257,7 @@ class NewProjectWindow(QDialog):
     def ejecutar_creacion(self):
         nombre = self.entry_nombre.text().strip()
         version_blender = self.combo_version.currentText().strip()
+        kitsu_template = self.combo_kitsu_template.currentText().strip()
 
         if not nombre or not nombre.replace("-", "").replace("_", "").isalnum():
             self.lbl_status.setText("Nombre inválido.")
@@ -249,6 +284,9 @@ class NewProjectWindow(QDialog):
         self.lbl_status.setText("Forjando estructura y conectando repositorios...")
         self.lbl_status.setStyleSheet("color: #F59E0B; font-weight: bold;")
         self.lbl_status.show()
+
+        # Inyectar plantilla seleccionada en el Builder (IMPORTANTE)
+        self.builder.kitsu_active_template = kitsu_template
 
         self.worker = ProjectCreationWorker(
             self.builder, nombre, version_blender, dependencias_finales, 

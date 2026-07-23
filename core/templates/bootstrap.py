@@ -65,6 +65,15 @@ def _setup_openstudio_environment():
                 print("[OPENSTUDIO HUB] Invocando autodetector nativo de Kitsu...")
                 bpy.ops.kitsu.con_detect_context('EXEC_DEFAULT')
                 print("[OPENSTUDIO HUB] Auto-navegación completada con éxito.")
+
+            # =================================================================
+            # OVERRIDE: Si la topología es custom (Storyboard), el detector falla.
+            # Inyectamos el contexto de forma manual y absoluta.
+            # =================================================================
+            if entity_type == "SEQUENCE" or task_type in ["storyboard"]:
+                print("[OPENSTUDIO HUB] Topología custom detectada. Forzando contexto en memoria...")
+                _inyectar_cache_basica(kitsu_module, "SEQUENCE")
+            # =================================================================
                 
         except Exception as e:
             print(f"[OPENSTUDIO HUB] Advertencia: No se pudo abrir el archivo {e}")
@@ -136,6 +145,19 @@ def _configurar_preferencias_estudio(kitsu_module: str, project_root: str, prod_
             addon_prefs.seq_dir_name = "strips"
         if hasattr(addon_prefs, "edit_dir_name"):
             addon_prefs.edit_dir_name = "edit"
+        
+        # --- NUEVO: INYECCIÓN DE RUTAS DE PLAYBLASTS ---
+
+        vfs_root = Path(project_root) / prod_folder
+        footage_dir = vfs_root / "edit" / "footage"
+        
+        if hasattr(addon_prefs, "shot_playblast_root_dir"):
+            addon_prefs.shot_playblast_root_dir = str(footage_dir / "pro")
+        if hasattr(addon_prefs, "seq_playblast_root_dir"):
+            addon_prefs.seq_playblast_root_dir = str(footage_dir / "pre")
+        if hasattr(addon_prefs, "frames_root_dir"):
+            addon_prefs.frames_root_dir = str(footage_dir / "post")
+        # -----------------------------------------------
             
         # =================================================================
         # MONKEY-PATCHING: Sobrescribir función hardcodeada de Kitsu
@@ -203,16 +225,24 @@ def _inyectar_cache_basica(kitsu_module: str, entity_type: str):
         kitsu_cache = importlib.import_module(f"{kitsu_module}.cache")
         entity_id = os.environ.get("OPENSTUDIO_KITSU_ENTITY_ID", "")
         task_type_id = os.environ.get("OPENSTUDIO_KITSU_TASK_TYPE_ID", "")
+        seq_id = os.environ.get("OPENSTUDIO_KITSU_SEQUENCE_ID", "")
 
         if entity_type == "SHOT" and entity_id:
             seq_id = os.environ.get("OPENSTUDIO_KITSU_SEQUENCE_ID", "")
-            if seq_id: kitsu_cache.sequence_active_set_by_id(bpy.context, seq_id)
+            if seq_id:
+                kitsu_cache.sequence_active_set_by_id(bpy.context, seq_id)
             kitsu_cache.shot_active_set_by_id(bpy.context, entity_id)
             
         elif entity_type == "ASSET" and entity_id:
             asset_type_id = os.environ.get("OPENSTUDIO_KITSU_ASSET_TYPE_ID", "")
-            if asset_type_id: kitsu_cache.asset_type_active_set_by_id(bpy.context, asset_type_id)
+            if asset_type_id:
+                kitsu_cache.asset_type_active_set_by_id(bpy.context, asset_type_id)
             kitsu_cache.asset_active_set_by_id(bpy.context, entity_id)
+
+        elif entity_type == "SEQUENCE":
+            target_id = entity_id if entity_id else seq_id
+            if target_id:
+                kitsu_cache.sequence_active_set_by_id(bpy.context, target_id)
 
         if task_type_id:
             kitsu_cache.task_type_active_set_by_id(bpy.context, task_type_id)

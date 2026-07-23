@@ -154,3 +154,42 @@ class ProductionManager:
 
         status_callback(f"Batch completed: {success_count} created, {error_count} failed.", "green" if error_count == 0 else "yellow")
         return True, f"Successfully processed {success_count} entities."
+
+    def get_or_create_storyboard_task_type(self, project_id: str) -> dict:
+        """
+        Busca el Task Type 'Storyboard' para 'Sequence'. 
+        Gracias a la plantilla del TD, este ya existe en el proyecto.
+        """
+        # 1. Buscar a nivel global
+        task_types = gazu.task.all_task_types()
+        storyboard_tt = next((tt for tt in task_types if tt["name"].lower() == "storyboard" and tt["for_entity"].lower() == "sequence"), None)
+        
+        # 2. Fallback de seguridad (solo lo crea en memoria global si alguien lo borró)
+        if not storyboard_tt:
+            storyboard_tt = gazu.task.new_task_type(
+                name="Storyboard", 
+                color="#F97316",
+                for_entity="Sequence"
+            )
+            
+        # ¡ELIMINADO el gazu.project.add_task_type que causaba el error de permisos!
+        return storyboard_tt
+
+    def create_sequence_with_task(self, project_id: str, sequence_name: str, task_type_id: str) -> dict:
+        """Crea la entidad Sequence y le adjunta la tarea de Storyboard."""
+        # Kitsu requiere el nombre del proyecto como objeto o dict para crear la secuencia
+        project = gazu.project.get_project(project_id)
+        
+        # Crear la secuencia en Kitsu
+        sequence = gazu.shot.new_sequence(project, name=sequence_name)
+        
+        # Crear la tarea inicial de Storyboard
+        # El estado inicial suele ser 'todo' o el por defecto del estudio
+        default_status = gazu.task.get_default_task_status()
+        gazu.task.new_task(
+            entity=sequence, 
+            task_type=task_type_id, 
+            name="main", 
+            task_status=default_status
+        )
+        return sequence

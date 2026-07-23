@@ -211,3 +211,42 @@ class KitsuManager:
 
         except Exception as e:
             return False, f"Fallo crítico durante el Seeding de Kitsu: {str(e)}"
+
+    def get_all_templates(self) -> list:
+        """
+        Consulta la base de datos de Kitsu y devuelve una lista con 
+        todos los esquemas de producción (Project Templates) disponibles.
+        """
+        try:
+            return gazu.project_template.all_project_templates()
+        except Exception as e:
+            print(f"[KitsuManager] Error al consultar plantillas: {e}")
+            return []
+
+    def create_project_from_template(self, project_name: str, template_name: str = "OpenStudioHub Default") -> Tuple[bool, str, dict]:
+        """
+        Construye el proyecto inyectando la estructura de una plantilla de Kitsu.
+        """
+        try:
+            if self.check_project_exists(project_name):
+                return False, f"El proyecto '{project_name}' ya existe.", {}
+            
+            # 1. Buscar la plantilla por su nombre real
+            template = gazu.project_template.get_project_template_by_name(template_name)
+            
+            # 2. Forjar el proyecto
+            if template:
+                print(f"[KitsuManager] Utilizando plantilla de Kitsu: {template_name}")
+                nuevo_proyecto = gazu.project.new_project(name=project_name, project_template=template)
+            else:
+                print(f"[KitsuManager] WARNING: Plantilla '{template_name}' no encontrada. Creando proyecto en blanco.")
+                nuevo_proyecto = gazu.project.new_project(project_name)
+
+            if not nuevo_proyecto:
+                return False, "Kitsu rechazó la creación del proyecto.", {}
+
+            return True, "Project created successfully.", nuevo_proyecto
+            
+        except Exception as e:
+            return False, f"Error crítico: {str(e)}", {}
+
