@@ -17,6 +17,8 @@ gestiona el enrutamiento base (Login vs Dashboard) e implementa el guardián de 
 Optimizado para Cero-Latencia en el arranque del Dashboard y enrutamiento PM.
 """
 
+from _version import __version__
+
 import sys
 from pathlib import Path
 
@@ -36,12 +38,12 @@ from ui.view_td import ViewTD
 from ui.view_pm import ViewPM
 
 
-class MacuareHub(QMainWindow):
+class OpenStudioHub(QMainWindow):
     def __init__(self):
         super().__init__()
 
         # Título base (Se sobrescribe dinámicamente tras el login)
-        self.setWindowTitle(self.tr("OpenStudio Hub - v0.8.0"))
+        self.setWindowTitle(f"OpenStudioHub - v{__version__}")
         self.resize(1000, 700) 
         self.setMinimumSize(800, 600)
 
@@ -87,7 +89,7 @@ class MacuareHub(QMainWindow):
 
     def mostrar_login(self):
         """Monta la vista de Login en el contenedor central."""
-        self.setWindowTitle(self.tr("OpenStudio Hub - v0.8.0"))
+        self.setWindowTitle(f"OpenStudio Hub - v{__version__}")
         
         vista_login = ViewLogin(
             parent=self, 
@@ -105,41 +107,55 @@ class MacuareHub(QMainWindow):
         if not studio_name:
             studio_name = "OpenStudio"
             
-        self.setWindowTitle(self.tr("{0} Hub - v0.8.0").format(studio_name))
+        self.setWindowTitle(f"{studio_name} Hub - v{__version__}")
         
         # Enrutamiento de Vistas (Factory)
         rol = self.auth.get_user_role()
-        nextcloud_dir = self.config_factory.get_workspace_root()
+        posicion = self.auth.get_user_position()
+
+        nas_dir = self.config_factory.get_workspace_root()
         
-        if rol in ["td", "supervisor"]:
-            vista = ViewTD(
+        if rol in ["td"]:
+            self.vista_actual = ViewTD(
                 parent=self, 
                 auth_manager=self.auth, 
-                nextcloud_dir=nextcloud_dir, 
+                nas_dir=nas_dir, 
                 vault_manager=self.vault,
                 config_factory=self.config_factory,
                 on_logout=self.ejecutar_logout
             )
-        elif rol in ["manager", "admin"]:
+        elif rol in ["manager"]:
             # Función anónima para mapear el status_callback a la barra de estado de QMainWindow
 
-            vista = ViewPM(
-                parent=self,
-                auth_manager=self.auth,
-                config_factory=self.config_factory,
-                on_logout=self.ejecutar_logout
-            )
+            if "lead" in posicion:
+                # EL INFILTRADO: Es un Manager en Kitsu, pero Artista (Editor) en el Hub
+                print("[OpenStudio Hub] Perfil Híbrido Detectado: Editor (Manager+Lead). Enrutando a ViewArtist.")
+                self.vista_actual = ViewArtist(
+                    self,
+                    self.auth,
+                    nas_dir,
+                    self.vault,
+                    self.config_factory,
+                    self.ejecutar_logout)
+            else:
+                # El Production Manager real
+                self.vista_actual = ViewPM(
+                    parent=self,
+                    auth_manager=self.auth,
+                    config_factory=self.config_factory,
+                    on_logout=self.ejecutar_logout
+                )
         else:
-            vista = ViewArtist(
+            self.vista_actual = ViewArtist(
                 parent=self, 
                 auth_manager=self.auth, 
-                nextcloud_dir=nextcloud_dir,
+                nas_dir=nas_dir,
                 vault_manager=self.vault,
                 config_factory=self.config_factory,
                 on_logout=self.ejecutar_logout
             )
         
-        self.setCentralWidget(vista)
+        self.setCentralWidget(self.vista_actual)
 
     def ejecutar_logout(self):
         """Limpia el estado global de Qt y revierte al formulario de acceso."""
@@ -168,6 +184,6 @@ if __name__ == "__main__":
     else:
         print("[OPENSTUDIO HUB] ⚠️ WARNING: 'macuare_theme.qss' not found. Starting with OS native theme.")
         
-    window = MacuareHub()
+    window = OpenStudioHub()
     window.show()
     sys.exit(app.exec())

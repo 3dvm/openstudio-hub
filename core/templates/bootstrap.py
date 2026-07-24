@@ -74,6 +74,20 @@ def _setup_openstudio_environment():
                 print("[OPENSTUDIO HUB] Topología custom detectada. Forzando contexto en memoria...")
                 _inyectar_cache_basica(kitsu_module, "SEQUENCE")
             # =================================================================
+
+            # =================================================================
+            # FORZADO VISUAL DE WORKSPACE (Handshake Editorial)
+            # =================================================================
+            if task_type in ["edit", "editorial", "montaje"]:
+                ws_name = "Video Editing"
+                if ws_name in bpy.data.workspaces:
+                    bpy.context.window.workspace = bpy.data.workspaces[ws_name]
+                    print(f"[OPENSTUDIO HUB] Workspace forzado a: {ws_name} para Edición.")
+            elif task_type in ["storyboard"]:
+                ws_name = "Storyboard"
+                if ws_name in bpy.data.workspaces:
+                    bpy.context.window.workspace = bpy.data.workspaces[ws_name]
+            # =================================================================
                 
         except Exception as e:
             print(f"[OPENSTUDIO HUB] Advertencia: No se pudo abrir el archivo {e}")

@@ -301,8 +301,12 @@ class WidgetBlendBuilder(QFrame):
             project_name = self.combo_projects.currentText()
             self.progress_modal = SpawningProgressDialog(self, self.tr("Spawning EDIT Master"))
             self.progress_modal.show()
+
+            self.spawn_worker = MasterSpawningWorker(
+                self.config_factory, project_name, "EDIT", self.current_project_id
+            )
             
-            self.spawn_worker = MasterSpawningWorker(self.config_factory, project_name, "EDIT")
+            #self.spawn_worker = MasterSpawningWorker(self.config_factory, project_name, "EDIT")
             self.spawn_worker.progress_updated.connect(self.progress_modal.update_progress)
             self.spawn_worker.log_stream.connect(self.progress_modal.append_log)
             

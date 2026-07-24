@@ -65,11 +65,12 @@ class MasterSpawningWorker(QThread):
     log_stream = Signal(str)
     finished_spawn = Signal(bool, str)
 
-    def __init__(self, config_factory, project_name, build_target):
+    def __init__(self, config_factory, project_name, build_target, project_id=""):
         super().__init__()
         self.config = config_factory
         self.project_name = project_name
         self.build_target = build_target
+        self.project_id = project_id
 
     def run(self):
         try:
@@ -97,6 +98,7 @@ class MasterSpawningWorker(QThread):
             env["OPENSTUDIO_BUILD_TARGET"] = self.build_target
             env["OPENSTUDIO_PROJECT_ROOT"] = str(project_root)
             env["BLENDER_USER_RESOURCES"] = str(project_root / vfs_local / "blender_data")
+            env["OPENSTUDIO_KITSU_PROJECT_ID"] = str(self.project_id)
             
             script_path = Path(__file__).parent.parent.parent / "core" / "templates" / "headless_builder.py"
             

@@ -128,12 +128,12 @@ class LaunchTaskWorker(QThread):
             self.finished_launch.emit(False, f"Error lanzando DCC: {str(e)}")
 
 class ViewArtist(BaseDashboardView):
-    def __init__(self, parent: QWidget, auth_manager: AuthManager, nextcloud_dir: Path, 
+    def __init__(self, parent: QWidget, auth_manager: AuthManager, nas_dir: Path, 
                  vault_manager: VaultManager, config_factory: ConfigFactory, on_logout: Callable[[], None], **kwargs):
         
         super().__init__(parent, auth_manager, config_factory, on_logout, **kwargs)
         
-        self.nextcloud_dir = nextcloud_dir
+        self.nas_dir = nas_dir
         self.vault = vault_manager
         
         self._task_widgets = []

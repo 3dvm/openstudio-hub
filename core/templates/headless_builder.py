@@ -169,23 +169,231 @@ def forjar_storyboard():
     except Exception as e:
         print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el archivo de Storyboard: {e}")
 
+def despertar_kitsu_module():
+    """Busca y activa el módulo usando el operador oficial de Blender que sí inicializa el RNA."""
+    import addon_utils
+    import bpy
+    import sys
+    
+    mod_name = None
+    for mod in addon_utils.modules():
+        if "blender_kitsu" in mod.__name__:
+            mod_name = mod.__name__
+            break
+            
+    if not mod_name:
+        print("[HeadlessBuilder] ❌ ERROR: El add-on blender_kitsu no está instalado.")
+        return None, None
+        
+    # LA CLAVE: Usar el operador nativo que inicializa las Preferencias de Extensiones
+    try:
+        bpy.ops.preferences.addon_enable(module=mod_name)
+    except Exception as e:
+        print(f"[HeadlessBuilder] Advertencia al habilitar: {e}")
+        
+    # Forzar la importación a sys.modules
+    import importlib
+    importlib.import_module(mod_name)
+    
+    return sys.modules.get(mod_name), mod_name
+
+
 def forjar_edit_master():
     print("[HeadlessBuilder] Iniciando forjado del Archivo Maestro de Edición...")
     inyectar_parche_proteccion_memoria()
-    cargar_plantilla_segura(app_template="Video Editing")
     
+    import os
+    import bpy
+    
+    # 0. DESPERTAR EL MÓDULO (Nos devuelve el módulo y su nombre oficial)
+    kitsu_module, mod_name = despertar_kitsu_module()
+    if not kitsu_module: return
+    
+    # 1. AUTENTICACIÓN PURA
+    hub_host = os.environ.get("OPENSTUDIO_KITSU_HOST", "http://localhost:8080/api") # Ajusta tu URL si es otra
+    hub_user = os.environ.get("OPENSTUDIO_KITSU_USER", "")
+    hub_user = os.environ.get("OPENSTUDIO_KITSU_USER", "")
+    hub_pwd = os.environ.get("OPENSTUDIO_KITSU_PWD", "")
+    project_id = os.environ.get("OPENSTUDIO_KITSU_PROJECT_ID", "")
+    project_root = os.environ.get("OPENSTUDIO_PROJECT_ROOT", "")
+    
+    if hub_user and hub_pwd:
+        print(f"[HeadlessBuilder] 🔒 Autenticando estricto en RAM como: {hub_user}")
+        
+        # Ahora sabemos que la llave oficial funciona porque usamos addon_enable
+        prefs = bpy.context.preferences.addons[mod_name].preferences
+        prefs.host = hub_host
+        prefs.email = hub_user
+        prefs.passwd = hub_pwd
+        
+        if project_root:
+            prefs.project_root_dir = project_root
+
+        bpy.ops.kitsu.session_start('EXEC_DEFAULT')
+        
+        if project_id:
+            print(f"[HeadlessBuilder] ♻️ Fijando proyecto activo (ID: {project_id})")
+            kitsu_module.cache.project_active_set_by_id(bpy.context, project_id)
+            prefs.project_active_id = project_id
+
+        import importlib
+        from pathlib import Path
+        vfs_svn = os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "svn")
+        kitsu_prefs_mod = importlib.import_module(f"{kitsu_module.__name__}.prefs")
+        
+        def custom_root_dir_get(context):
+            pref_instance = kitsu_prefs_mod.addon_prefs_get(context)
+            return Path(pref_instance.project_root_dir) / vfs_svn
+            
+        kitsu_prefs_mod.project_root_dir_get = custom_root_dir_get
+
+    # 2. DISPARAR LA CREACIÓN DEL EDIT
     try:
+        print("[HeadlessBuilder] 🎬 Ejecutando kitsu.create_edit_file()...")
         bpy.ops.kitsu.create_edit_file(create_kitsu_edit=True, save_file=False)
         print("[HeadlessBuilder] ✓ Archivo Maestro de Edición configurado en memoria por Kitsu.")
 
-        import sys
-        kitsu_module = sys.modules.get("bl_ext.user_default.blender_kitsu") or sys.modules.get("blender_kitsu")
+        # 3. EXTRACCIÓN DE LA RUTA Y GUARDADO FÍSICO
         edit_entity = kitsu_module.cache.edit_default_get(episode_id=bpy.context.scene.kitsu.episode_active_id)
         filepath_str = edit_entity.get_filepath(bpy.context)
         
         _guardar_entidad_forjada(filepath_str, "EDIT MASTER")
+        
     except Exception as e:
+        import traceback
         print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el archivo Edit: {e}")
+        traceback.print_exc()
+
+# def forjar_edit_master():
+#     print("[HeadlessBuilder] Iniciando forjado del Archivo Maestro de Edición...")
+#     inyectar_parche_proteccion_memoria()
+#     cargar_plantilla_segura(app_template="Video_Editing")
+#
+#     # import sys
+#     # import addon_utils  # <-- LIBRERÍA NATIVA PARA ADD-ONS
+#     #
+#     # # 0. FORZAR EL ENCENDIDO DEL ADD-ON EN MODO HEADLESS
+#     # addon_utils.enable("blender_kitsu")
+#     #
+#     # kitsu_module = sys.modules.get("bl_ext.user_default.blender_kitsu") or sys.modules.get("blender_kitsu")
+#     #
+#     # # 1. INICIAR SESIÓN Y CONTEXTO (Sin destruir la memoria con plantillas)
+#     # hub_user = os.environ.get("OPENSTUDIO_KITSU_USER", "")
+#     # hub_pwd = os.environ.get("OPENSTUDIO_KITSU_PWD", "")
+#     # project_id = os.environ.get("OPENSTUDIO_KITSU_PROJECT_ID", "")
+#     #
+#     # if kitsu_module and hub_user and hub_pwd:
+#     #     print(f"[HeadlessBuilder] 🔒 Iniciando sesión estricta como: {hub_user}")
+#     #     prefs = bpy.context.preferences.addons[kitsu_module.__name__].preferences
+#     #     prefs.email = hub_user
+#     #     prefs.passwd = hub_pwd
+#     #     bpy.ops.kitsu.session_start('EXEC_DEFAULT')
+#     #
+#     #     if project_id:
+#     #         print(f"[HeadlessBuilder] ♻️ Fijando proyecto activo (ID: {project_id})")
+#     #         kitsu_module.cache.project_active_set_by_id(bpy.context, project_id)
+#     #         prefs.project_active_id = project_id
+#     #
+#     #     # Reinyectar Monkey Patch del VFS para el pathing
+#     #     import importlib
+#     #     from pathlib import Path
+#     #     vfs_svn = os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "svn")
+#     #     kitsu_prefs_mod = importlib.import_module(f"{kitsu_module.__name__}.prefs")
+#     #
+#     #     def custom_root_dir_get(context):
+#     #         pref_instance = kitsu_prefs_mod.addon_prefs_get(context)
+#     #         return Path(pref_instance.project_root_dir) / vfs_svn
+#     #
+#     #     kitsu_prefs_mod.project_root_dir_get = custom_root_dir_get
+#     #
+#
+#     try:
+#         bpy.ops.kitsu.create_edit_file(create_kitsu_edit=True, save_file=False)
+#         print("[HeadlessBuilder] ✓ Archivo Maestro de Edición configurado en memoria por Kitsu.")
+#
+#         import sys
+#         kitsu_module = sys.modules.get("bl_ext.user_default.blender_kitsu") or sys.modules.get("blender_kitsu")
+#         edit_entity = kitsu_module.cache.edit_default_get(episode_id=bpy.context.scene.kitsu.episode_active_id)
+#         filepath_str = edit_entity.get_filepath(bpy.context)
+#
+#         _guardar_entidad_forjada(filepath_str, "EDIT MASTER")
+#     except Exception as e:
+#         print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el archivo Edit: {e}")
+
+# def forjar_edit_master():
+#     print("[HeadlessBuilder] Iniciando forjado del Archivo Maestro de Edición...")
+#     inyectar_parche_proteccion_memoria()
+#
+#     import os
+#     import bpy
+#
+#     # 0. DESPERTAR EL MÓDULO CON SU NOMBRE REAL
+#     kitsu_module = despertar_kitsu_module()
+#     if not kitsu_module: return
+#
+#     # --- BÚSQUEDA INTELIGENTE DE LA LLAVE DE PREFERENCIAS ---
+#     addon_key = "blender_kitsu"
+#     if addon_key not in bpy.context.preferences.addons:
+#         # Si no está con el nombre corto, buscamos cualquiera que diga 'kitsu'
+#         for k in bpy.context.preferences.addons.keys():
+#             if "kitsu" in k.lower():
+#                 addon_key = k
+#                 break
+#
+#     if addon_key not in bpy.context.preferences.addons:
+#         print("[HeadlessBuilder] ❌ ERROR: Preferencias del add-on no encontradas en memoria.")
+#         return
+#     # --------------------------------------------------------
+#
+#     # 1. AUTENTICACIÓN PURA (Sin cargar plantillas nativas de Blender)
+#     hub_user = os.environ.get("OPENSTUDIO_KITSU_USER", "")
+#     hub_pwd = os.environ.get("OPENSTUDIO_KITSU_PWD", "")
+#     project_id = os.environ.get("OPENSTUDIO_KITSU_PROJECT_ID", "")
+#
+#     if hub_user and hub_pwd:
+#         print(f"[HeadlessBuilder] 🔒 Autenticando estricto en RAM como: {hub_user}")
+#         prefs = bpy.context.preferences.addons[addon_key].preferences
+#         prefs.email = hub_user
+#         prefs.passwd = hub_pwd
+#
+#         # 1.1 Iniciar sesión pura
+#         bpy.ops.kitsu.session_start('EXEC_DEFAULT')
+#
+#         # 1.2 Fijar el contexto del proyecto
+#         if project_id:
+#             print(f"[HeadlessBuilder] ♻️ Fijando proyecto activo (ID: {project_id})")
+#             kitsu_module.cache.project_active_set_by_id(bpy.context, project_id)
+#             prefs.project_active_id = project_id
+#
+#         # 1.3 Reinyectar Monkey Patch del VFS para el pathing
+#         import importlib
+#         from pathlib import Path
+#         vfs_svn = os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "svn")
+#         kitsu_prefs_mod = importlib.import_module(f"{kitsu_module.__name__}.prefs")
+#
+#         def custom_root_dir_get(context):
+#             pref_instance = kitsu_prefs_mod.addon_prefs_get(context)
+#             return Path(pref_instance.project_root_dir) / vfs_svn
+#
+#         kitsu_prefs_mod.project_root_dir_get = custom_root_dir_get
+#
+#     # 2. DISPARAR LA CREACIÓN DEL EDIT
+#     try:
+#         print("[HeadlessBuilder] 🎬 Ejecutando kitsu.create_edit_file()...")
+#         bpy.ops.kitsu.create_edit_file(create_kitsu_edit=True, save_file=False)
+#         print("[HeadlessBuilder] ✓ Archivo Maestro de Edición configurado en memoria por Kitsu.")
+#
+#         # 3. EXTRACCIÓN DE LA RUTA Y GUARDADO FÍSICO
+#         edit_entity = kitsu_module.cache.edit_default_get(episode_id=bpy.context.scene.kitsu.episode_active_id)
+#         filepath_str = edit_entity.get_filepath(bpy.context)
+#
+#         _guardar_entidad_forjada(filepath_str, "EDIT MASTER")
+#
+#     except Exception as e:
+#         import traceback
+#         print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el archivo Edit: {e}")
+#         traceback.print_exc()
+
 
 def forjar_shot():
     print("[HeadlessBuilder] Iniciando forjado de Shot (Toma)...")

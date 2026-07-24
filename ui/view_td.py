@@ -32,13 +32,13 @@ from ui.widget_settings import SettingsWidget
 
 
 class ViewTD(BaseDashboardView):
-    def __init__(self, parent, auth_manager: AuthManager, nextcloud_dir: Path, 
+    def __init__(self, parent, auth_manager: AuthManager, nas_dir: Path, 
                  vault_manager: VaultManager, config_factory: ConfigFactory, on_logout: Callable[[], None], **kwargs):
         
         # Inicializa el cascarón maestro (TopBar, Sidebar, StatusBar)
         super().__init__(parent, auth_manager, config_factory, on_logout, **kwargs)
         
-        self.nextcloud_dir = nextcloud_dir
+        self.nas_dir = nas_dir
         self.vault = vault_manager
 
         self.setObjectName("ViewTDBase")
@@ -63,7 +63,7 @@ class ViewTD(BaseDashboardView):
         # Index 0: Project Management List
         self.vista_proyectos = ProjectListWidget(
             parent=self.stacked_content,
-            nextcloud_dir=self.nextcloud_dir,
+            nas_dir=self.nas_dir,
             auth_manager=self.auth,
             vault_manager=self.vault,
             config_factory=self.config_factory,

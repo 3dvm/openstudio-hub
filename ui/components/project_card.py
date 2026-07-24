@@ -124,7 +124,7 @@ class DeleteProjectDialog(QDialog):
         self.btn_delete.setEnabled(text == self.project_name)
 
 class ProjectCard(QFrame):
-    def __init__(self, parent: QWidget, project_data: dict, auth_manager, nextcloud_dir: Path, 
+    def __init__(self, parent: QWidget, project_data: dict, auth_manager, nas_dir: Path, 
                  config_factory=None, vault_manager=None, on_rebuild_callback: Callable = None, 
                  on_open_wizard_callback: Callable = None, status_callback: Callable = None):
         super().__init__(parent)
@@ -139,7 +139,7 @@ class ProjectCard(QFrame):
         
         # Instanciar Controladores
         self.kitsu_mgr = KitsuManager()
-        self.nas_mgr = NasManager(nextcloud_dir)
+        self.nas_mgr = NasManager(nas_dir)
         
         self.project_dir = None
         self.user_role = self.auth.get_user_role() if hasattr(self.auth, 'get_user_role') else "user"

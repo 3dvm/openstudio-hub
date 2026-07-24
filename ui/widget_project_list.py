@@ -45,11 +45,11 @@ class ProjectGridWorker(QThread):
 
 
 class ProjectListWidget(QFrame):
-    def __init__(self, parent, nextcloud_dir: Path, auth_manager, vault_manager, config_factory, 
+    def __init__(self, parent, nas_dir: Path, auth_manager, vault_manager, config_factory, 
                  status_callback, on_open_wizard_callback=None, **kwargs):
         super().__init__(parent, **kwargs)
         
-        self.nextcloud_dir = nextcloud_dir
+        self.nas_dir = nas_dir
         self.auth = auth_manager
         self.vault = vault_manager
         self.config_factory = config_factory
@@ -187,7 +187,7 @@ class ProjectListWidget(QFrame):
                 parent=self.grid_widget,
                 project_data=project_data,
                 auth_manager=self.auth,
-                nextcloud_dir=self.nextcloud_dir,
+                nas_dir=self.nas_dir,
                 config_factory=self.config_factory,
                 vault_manager=self.vault,
                 on_rebuild_callback=self.cargar_proyectos,

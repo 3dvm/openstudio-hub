@@ -42,28 +42,28 @@ class ProductionManager:
         """
         pending_list = []
         try:
-            # Note: In a production Gazu environment, you might filter by a specific status ID.
-            # We fetch all open shots and filter them locally for flexibility.
+            # Ampliamos el espectro para atrapar las tomas recién creadas por el Editor
+            valid_statuses = ["Pending Validation", "Waiting For Approval", "Todo", "Ready to Start"]
+            
             shots = gazu.shot.all_shots_for_project(project_id)
             for shot in shots:
-                status = shot.get("status", "Unknown")
-                # Assuming 'Pending Validation' or similar editorial statuses
-                if status in ["Pending Validation", "Waiting For Approval", "Todo"]:
+                status = shot.get("status", "Todo") # Fallback a Todo si es nueva
+                if status in valid_statuses:
                     seq = gazu.shot.get_sequence(shot.get("sequence_id"))
                     pending_list.append({
                         "id": shot["id"],
                         "name": shot["name"],
                         "type": "Shot",
                         "parent": seq["name"] if seq else "Unknown",
-                        "frame_in": shot.get("nb_frames", 0), # Simplified for Grid View
+                        "frame_in": shot.get("nb_frames", 0),
                         "status": status,
                         "raw_data": shot
                     })
                     
             assets = gazu.asset.all_assets_for_project(project_id)
             for asset in assets:
-                status = asset.get("status", "Unknown")
-                if status in ["Pending Validation", "Waiting For Approval", "Todo"]:
+                status = asset.get("status", "Todo")
+                if status in valid_statuses:
                     asset_type = gazu.asset.get_asset_type(asset.get("entity_type_id"))
                     pending_list.append({
                         "id": asset["id"],
@@ -79,6 +79,23 @@ class ProductionManager:
             print(f"[PRODUCTION MANAGER] Gazu API Error fetching entities: {e}")
             
         return pending_list
+
+    def map_file_to_task(self, entity_dict: dict, task_type_name: str, relative_path: str) -> bool:
+        """
+        Utility for the Spawning Workers: Inyecta la ruta física del .blend generado 
+        en la Metadata de la entidad (Custom Data) para que el PathResolver la encuentre.
+        """
+        try:
+            entity_data = entity_dict.get("data")
+            if not entity_data:
+                entity_data = {}
+                
+            entity_data["blend_file_path"] = relative_path
+            gazu.entity.update_entity_data(entity_dict["id"], entity_data)
+            return True
+        except Exception as e:
+            print(f"[PRODUCTION MANAGER] Error maping file to Kitsu: {e}")
+            return False
 
     def batch_create_entity_files(self, project_name: str, entities: List[Dict[str, Any]], 
                                   base_template: str, task_types: List[str], status_callback) -> Tuple[bool, str]:

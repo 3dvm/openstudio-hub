@@ -24,7 +24,7 @@ from typing import Optional, Dict
 class NasManager:
     def __init__(self, base_dir: Path):
         """
-        Inicializa el gestor con la ruta raíz del almacenamiento local o de red (Nextcloud/NAS).
+        Inicializa el gestor con la ruta raíz del almacenamiento local o de red (NAS).
         """
         self.base_dir = Path(base_dir) if base_dir else None
 
