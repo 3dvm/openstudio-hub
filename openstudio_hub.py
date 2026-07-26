@@ -27,6 +27,7 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
 from PySide6.QtGui import QCloseEvent
 
 # --- CORE (Motores) ---
+from core import vault_manager
 from core.auth_manager import AuthManager
 from core.vault_manager import VaultManager
 from core.config_factory import ConfigFactory
@@ -143,6 +144,7 @@ class OpenStudioHub(QMainWindow):
                     parent=self,
                     auth_manager=self.auth,
                     config_factory=self.config_factory,
+                    vault_manager=self.vault,
                     on_logout=self.ejecutar_logout
                 )
         else:

@@ -7,7 +7,7 @@
    Licencia: GNU General Public License v3.0 (GPLv3)
    
    Autor: Ernesto Del Valle Macuare
-   Versión del archivo: 0.6.5
+   Versión del archivo: 0.6.6 (Optimizada)
    ========================================================================================= 
 */
 
@@ -19,30 +19,33 @@ QWidget {
     color: #F8FAFC;
 }
 
-QMainWindow, #ViewLoginBase {
-    background-color: #2E3643; /* Base sincronizada con el panel de login */
+QMainWindow, QWidget#ViewLoginBase, QFrame#LoginPanel {
+    background-color: #2E3643;
 }
 
 /* ---------------------------------------------------------
    TOP BAR & BRANDING
 --------------------------------------------------------- */
-#TopBar {
-    background-color: #1F2531; /* Fondo top bar actualizado */
-    border-bottom: 1px solid #141820; /* Borde oscurecido acorde al fondo */
+QFrame#TopBar, QWidget#HeroPanel, QFrame#FloatingCard, QFrame#StatusBar {
+    background-color: #1F2531;
 }
 
-#TopSeparator {
-    background-color: #2E3643; /* Separador sutil */
+QFrame#TopBar {
+    border-bottom: 1px solid #141820;
+}
+
+QFrame#TopSeparator {
+    background-color: #2E3643;
     border-radius: 1px;
 }
 
-#H1Title {
+QLabel#H1Title {
     font-size: 20px;
     font-weight: bold;
-    color: #6D7A8B; /* Color del texto del título ajustado al mockup */
+    color: #6D7A8B;
 }
 
-#AvatarIcon {
+QLabel#AvatarIcon {
     font-size: 16px;
     background-color: #2E3643;
     border-radius: 17px; 
@@ -52,25 +55,29 @@ QMainWindow, #ViewLoginBase {
 /* ---------------------------------------------------------
    SIDEBAR NAVIGATION (TD VIEW)
 --------------------------------------------------------- */
-#SidebarNavInactive, #SidebarNavActive {
+QPushButton#SidebarNavInactive, QPushButton#SidebarNavActive {
     background-color: transparent;
-    color: #94A3B8;
     border: 1px solid transparent;
     border-radius: 8px;
     text-align: left;
     padding: 14px 20px;
     font-size: 16px;
     font-weight: 600;
+    outline: none;
 }
 
-#SidebarNavInactive:hover {
-    border: 1px solid #3B82F6; /* Azul tenue al hacer hover */
+QPushButton#SidebarNavInactive {
+    color: #94A3B8;
+}
+
+QPushButton#SidebarNavInactive:hover {
+    border: 1px solid #3B82F6;
     color: #E2E8F0;
     background-color: rgba(59, 130, 246, 0.05);
 }
 
-#SidebarNavActive {
-    border: 1px solid #F97316; /* Naranja corporativo para elemento activo */
+QPushButton#SidebarNavActive {
+    border: 1px solid #F97316;
     color: #F97316;
     background-color: rgba(249, 115, 22, 0.05);
 }
@@ -78,94 +85,100 @@ QMainWindow, #ViewLoginBase {
 /* ---------------------------------------------------------
    PANELS & CONTAINERS
 --------------------------------------------------------- */
-#LoginPanel {
-    background-color: #2E3643; /* Fondo corporativo suave ajustado al mockup */
-}
-
-#HeroPanel {
-    background-color: #1F2531;
+QWidget#HeroPanel {
     border-left: 1px solid #1F2531; 
 }
 
-#FloatingCard {
+QFrame#FloatingCard, QDialog#FloatingCard {
     background-color: #1F2531;
     border: 1px solid #141820;
     border-radius: 12px;
 }
 
-#CardTitle {
+QLabel#CardTitle {
     font-size: 24px;
     font-weight: bold;
-    color: #F8FAFC;
 }
 
-#H2Title {
+QLabel#H2Title {
     font-size: 16px;
     font-weight: bold;
-    color: #F8FAFC;
 }
 
 /* ---------------------------------------------------------
    INPUTS & FORMS
 --------------------------------------------------------- */
-#InputLabel {
+QLabel#InputLabel {
     color: #94A3B8;
     font-size: 12px;
     font-weight: bold;
 }
 
-#FormInput {
-    background-color: #1F2531; /* Oscurecido respecto al fondo del panel */
+/* Aplicado globalmente a todos los campos de texto posibles */
+QLineEdit#FormInput, QTextEdit#FormInput, QPlainTextEdit#FormInput, QComboBox#FormInput, QListWidget#FormInput {
+    background-color: #1F2531;
     border: 1px solid #475569;
     border-radius: 8px;
-    padding: 0px 15px;
+    padding: 0 15px;
     font-size: 13px;
     color: #F8FAFC;
+    selection-background-color: #F97316;
 }
 
-#FormInput:focus {
-    border: 1px solid #F97316; /* Blender Orange en Focus */
+QLineEdit#FormInput:focus, QTextEdit#FormInput:focus, QPlainTextEdit#FormInput:focus, QComboBox#FormInput:focus, QListWidget#FormInput:focus {
+    border: 1px solid #F97316;
     background-color: #1A1F29;
 }
 
-#FormInput::placeholder {
+QLineEdit#FormInput::placeholder, QTextEdit#FormInput::placeholder, QPlainTextEdit#FormInput::placeholder {
     color: #64748B;
 }
 
 /* ---------------------------------------------------------
    BUTTONS (Especificidad estricta para Linux/GTK Override)
 --------------------------------------------------------- */
-QPushButton#PrimaryButton {
-    background-color: #F97316; /* Blender Orange Base */
+QPushButton#PrimaryButton, QPushButton#OrangeCTA {
+    background-color: #F97316;
     color: #FFFFFF;
     border: none;
-    border-radius: 8px;
-    font-size: 16px;
     font-weight: bold;
+    outline: none;
 }
 
-QPushButton#PrimaryButton:hover {
+QPushButton#PrimaryButton {
+    border-radius: 8px;
+    font-size: 16px;
+}
+
+QPushButton#OrangeCTA {
+    font-size: 15px;
+    border-radius: 20px;
+    padding: 10px 30px;
+}
+
+QPushButton#PrimaryButton:hover, QPushButton#OrangeCTA:hover {
     background-color: #EA580C;
 }
 
-QPushButton#PrimaryButton:pressed {
+QPushButton#PrimaryButton:pressed, QPushButton#OrangeCTA:pressed {
     background-color: #C2410C;
 }
 
-QPushButton#PrimaryButton:disabled {
+QPushButton#PrimaryButton:disabled, QPushButton#OrangeCTA:disabled {
     background-color: #334155; 
     color: #64748B;
 }
 
-#SecondaryButton {
+QPushButton#SecondaryButton {
     background-color: #1F2531;
     color: #F8FAFC;
     border: 1px solid #475569;
     border-radius: 6px;
     font-weight: bold;
+    outline: none;
 }
 
-#SecondaryButton:hover {
+QPushButton#SecondaryButton:hover {
     background-color: #2E3643;
 }
 
@@ -175,6 +188,7 @@ QPushButton#LinkButton {
     font-size: 12px;
     border: none;
     padding: 0;
+    outline: none;
 }
 
 QPushButton#LinkButton:hover {
@@ -185,28 +199,28 @@ QPushButton#LinkButton:hover {
 /* ---------------------------------------------------------
    ALERTS & STATUS
 --------------------------------------------------------- */
-#ErrorLabel {
+QLabel#ErrorLabel {
     color: #EF4444; 
     font-size: 12px;
     font-weight: bold;
 }
 
-#StatusBar {
-    background-color: #1F2531;
+QFrame#StatusBar {
     border-top: 1px solid #141820;
 }
 
-#StatusText {
+QLabel#StatusText {
     color: #475569;
     font-size: 10px;
     font-weight: bold;
 }
+
 /* ======================================================= */
 /* PIPELINE WIZARD COMPONENT                               */
 /* ======================================================= */
 
 QFrame#PipelineWizardCard {
-    background-color: #1E293B; /* Slate 800 */
+    background-color: #1E293B;
     border-radius: 12px;
     border: 1px solid #334155;
 }
@@ -219,24 +233,24 @@ QLabel#WizardHeader {
 
 /* --- Nodos (Círculos) --- */
 QLabel#StepNodeCompleted, QLabel#StepNodeActive, QLabel#StepNodePending {
-    border-radius: 22px; /* Hace el círculo perfecto (44x44) */
+    border-radius: 22px; 
     font-size: 16px;
     font-weight: bold;
 }
 
 QLabel#StepNodeCompleted {
-    background-color: #10B981; /* Verde Esmeralda */
+    background-color: #10B981;
     color: #0F172A;
 }
 
 QLabel#StepNodeActive {
-    background-color: #3B82F6; /* Azul Eléctrico */
-    color: white;
+    background-color: #3B82F6;
+    color: #FFFFFF;
     border: 2px solid #60A5FA;
 }
 
 QLabel#StepNodePending {
-    background-color: #334155; /* Slate oscuro */
+    background-color: #334155;
     color: #94A3B8;
 }
 
@@ -246,28 +260,14 @@ QLabel#StepTitleActive { color: #3B82F6; font-weight: bold; }
 QLabel#StepTitlePending { color: #94A3B8; }
 
 /* --- Líneas Conectoras --- */
-QFrame#StepLineCompleted {
-    border-top: 4px solid #10B981; /* Línea gruesa verde */
-    margin: 0px 10px;
-}
-QFrame#StepLinePending {
-    border-top: 4px solid #334155; /* Línea gris inactiva */
-    margin: 0px 10px;
+QFrame#StepLineCompleted, QFrame#StepLinePending {
+    margin: 0 10px;
 }
 
-/* --- El Call To Action (Blender Orange) --- */
-QPushButton#OrangeCTA {
-    background-color: #F97316;
-    color: white;
-    font-size: 15px;
-    font-weight: bold;
-    border-radius: 20px; /* Botón tipo píldora */
-    padding: 10px 30px;
-    border: none;
+QFrame#StepLineCompleted {
+    border-top: 4px solid #10B981;
 }
-QPushButton#OrangeCTA:hover {
-    background-color: #EA580C; /* Hover más oscuro */
-}
-QPushButton#OrangeCTA:pressed {
-    background-color: #C2410C;
+
+QFrame#StepLinePending {
+    border-top: 4px solid #334155;
 }

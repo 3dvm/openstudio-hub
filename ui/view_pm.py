@@ -13,6 +13,7 @@
 from PySide6.QtWidgets import QStackedWidget, QLabel
 from PySide6.QtCore import Qt
 
+from core import vault_manager
 from ui.base_dashboard import BaseDashboardView
 from ui.widget_blend_builder import WidgetBlendBuilder
 
@@ -20,7 +21,8 @@ from ui.widget_blend_builder import WidgetBlendBuilder
 from ui.widget_project_list import ProjectListWidget
 
 class ViewPM(BaseDashboardView):
-    def __init__(self, parent, auth_manager, config_factory, on_logout, **kwargs):
+    def __init__(self, parent, auth_manager, config_factory, on_logout, vault_manager=None, **kwargs):
+        self.vault_manager = vault_manager
         super().__init__(parent, auth_manager, config_factory, on_logout, **kwargs)
         
         self.setObjectName("ViewPMBase")
@@ -41,7 +43,7 @@ class ViewPM(BaseDashboardView):
         # Le pasamos un callback para que la tarjeta sepa qué hacer al hacer clic en "Open Wizard"
         self.project_list = ProjectListWidget(
             parent=self.stacked_content,
-            nextcloud_dir=self.config_factory.get_workspace_root(),
+            nas_dir=self.config_factory.get_workspace_root(),
             auth_manager=self.auth,
             vault_manager=None, # El PM delega esto al config_factory en la nueva arquitectura
             config_factory=self.config_factory,
@@ -55,7 +57,8 @@ class ViewPM(BaseDashboardView):
             parent=self.stacked_content,
             auth_manager=self.auth,
             config_factory=self.config_factory,
-            status_callback=self.actualizar_status
+            status_callback=self.actualizar_status,
+            vault_manager=self.vault_manager
         )
         self.stacked_content.addWidget(self.widget_builder)
 

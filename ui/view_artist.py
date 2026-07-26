@@ -54,13 +54,35 @@ class FetchArtistTasksWorker(QThread):
             user = gazu.client.get_current_user()
             all_tasks = gazu.task.all_tasks_for_person(user)
             
-            status_targets = ["Todo", "WIP", "Retake", "Ready to Start", "Revision Needed"]
+            status_targets = ["Todo", "Work In Progress", "Waiting For Approval", "Retake", "Ready To Start"]
             tasks = [
                 t for t in all_tasks 
                 if (t.get("task_status_name") in status_targets or 
                     t.get("task_status", {}).get("name") in status_targets)
             ]
             
+            # --- NUEVO: ENRIQUECIMIENTO DEL TASK DATA ---
+            for t in tasks:
+                entity_type = t.get("entity_type_name", t.get("entity_type", "")).lower()
+                
+                # Si la tarea pertenece a un Asset, Kitsu no nos da la subcategoría nativamente,
+                # así que debemos consultarla y empaquetarla nosotros.
+                if entity_type == "asset":
+                    try:
+                        # 1. Consultar el Asset real usando el entity_id
+                        asset_completo = gazu.asset.get_asset(t["entity_id"])
+                        if asset_completo:
+                            # En Kitsu, el ID del 'Asset Type' se guarda como 'entity_type_id' dentro del Asset
+                            t["asset_type_id"] = asset_completo.get("entity_type_id", "")
+                            
+                            # 2. Opcional pero vital para tu PathResolver: Traer también el nombre del tipo
+                            asset_type = gazu.asset.get_asset_type(t["asset_type_id"])
+                            if asset_type:
+                                t["asset_type_name"] = asset_type.get("name", "")
+                    except Exception as inner_e:
+                        print(f"[Worker] Advertencia: Fallo al enriquecer Asset: {inner_e}")
+            # --------------------------------------------
+
             self.data_ready.emit(tasks)
         except Exception as e:
             self.error_occurred.emit(str(e))

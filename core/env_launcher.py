@@ -146,12 +146,17 @@ def lanzar_blender(project_root: Path, config_path: Path, svn_user: str, svn_pwd
         env["OPENSTUDIO_KITSU_ENTITY_NAME"] = task_data.get("entity_name", "")
         env["OPENSTUDIO_KITSU_SEQUENCE_ID"] = task_data.get("sequence_id", "")
         env["OPENSTUDIO_KITSU_SEQUENCE_NAME"] = task_data.get("sequence_name", "")
-        env["OPENSTUDIO_KITSU_ASSET_TYPE_ID"] = task_data.get("asset_type_id", "")
+        # env["OPENSTUDIO_KITSU_ASSET_TYPE_ID"] = task_data.get("asset_type_id", "")
+        # env["OPENSTUDIO_KITSU_ASSET_TYPE_NAME"] = task_data.get("asset_type_name", "")
+
+        # Kitsu usa 'entity_type_id' para referirse al tipo de Asset dentro de un diccionario de Asset crudo
+        env["OPENSTUDIO_KITSU_ASSET_TYPE_ID"] = task_data.get("asset_type_id", task_data.get("entity_type_id", ""))
         env["OPENSTUDIO_KITSU_ASSET_TYPE_NAME"] = task_data.get("asset_type_name", "")
 
         env["OPENSTUDIO_SVN_USER"] = svn_user
         env["OPENSTUDIO_SVN_PASSWORD"] = svn_pwd
 
+        breakpoint()
         # 3. Preparar el script bootstrap
         bootstrap_src = Path(__file__).parent / "templates" / "bootstrap.py"
         bootstrap_dst = project_root / vfs_local / "bootstrap.py"
@@ -174,6 +179,14 @@ def lanzar_blender(project_root: Path, config_path: Path, svn_user: str, svn_pwd
 
         # 4. Lanzar el subproceso con Sandboxing Inyectado
         cmd = [str(blender_bin), "--app-template", template_name, "--python", str(bootstrap_dst)]
+        # --- DEBUG VOLCADO DE ENTORNO ---
+        print("\n" + "="*40)
+        print("🔍 AUDITORÍA DE ENV_LAUNCHER ANTES DEL POPEN")
+        print("="*40)
+        for key in ["OPENSTUDIO_KITSU_ASSET_TYPE_ID", "OPENSTUDIO_KITSU_ASSET_TYPE_NAME", "OPENSTUDIO_KITSU_ENTITY_NAME"]:
+            print(f"[{key}]: '{clean_env.get(key, 'NO EXISTE')}'")
+        print("="*40 + "\n")
+        # --------------------------------
         proceso = subprocess.Popen(cmd, env=clean_env)
 
         status_callback(f"Blender en ejecucion ({project_name})...", "#00aaff")

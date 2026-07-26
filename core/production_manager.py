@@ -43,7 +43,7 @@ class ProductionManager:
         pending_list = []
         try:
             # Ampliamos el espectro para atrapar las tomas recién creadas por el Editor
-            valid_statuses = ["Pending Validation", "Waiting For Approval", "Todo", "Ready to Start"]
+            valid_statuses = ["Todo", "Ready To Start"]
             
             shots = gazu.shot.all_shots_for_project(project_id)
             for shot in shots:
@@ -63,13 +63,18 @@ class ProductionManager:
             assets = gazu.asset.all_assets_for_project(project_id)
             for asset in assets:
                 status = asset.get("status", "Todo")
-                if status in valid_statuses:
+                if status == "Todo":
+                    
+                    asset_type_id = asset.get("entity_type_id", "")
+
                     asset_type = gazu.asset.get_asset_type(asset.get("entity_type_id"))
+                    
                     pending_list.append({
                         "id": asset["id"],
                         "name": asset["name"],
-                        "type": "Asset",
-                        "parent": asset_type["name"] if asset_type else "Unknown",
+                        "Parent": asset.get("parent"),
+                        "type": asset_type["name"] if asset_type else "Unknown",
+                        "asset_type_id": asset_type_id,
                         "frame_in": 0,
                         "status": status,
                         "raw_data": asset

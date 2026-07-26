@@ -19,287 +19,179 @@ abre el archivo de la tarea (si existe), e invoca la autodetección nativa del c
 import bpy
 import os
 import importlib
-import addon_utils
 from pathlib import Path
 
-def _setup_openstudio_environment():
-    print("\n" + "="*50)
-    print("[OPENSTUDIO HUB] Iniciando Bootstrap en Blender (Post-RestrictBlend)...")
-    
-    # 1. Extraer contexto inyectado
-    user_role = os.environ.get("OPENSTUDIO_USER_ROLE", "artist").lower()
-    task_type = os.environ.get("OPENSTUDIO_TASK_TYPE", "generic").lower()
+# =================================================================
+# 1. RESOLUCIÓN DINÁMICA DE EXTENSIONES
+# =================================================================
+def _get_kitsu_addon_key() -> str:
+    """Encuentra la clave exacta de Kitsu en el nuevo sistema de extensiones (v4.2+)."""
+    for key in bpy.context.preferences.addons.keys():
+        if "blender_kitsu" in key:
+            return key
+    return "blender_kitsu" # Fallback legacy
+
+def _get_kitsu_module():
+    """Devuelve el módulo cargado en memoria de Kitsu."""
+    addon_key = _get_kitsu_addon_key()
+    import sys
+    return sys.modules.get(addon_key)
+
+# =================================================================
+# 2. HANDLERS PERSISTENTES (Sobreviven a F8 y apertura de archivos)
+# =================================================================
+@bpy.app.handlers.persistent
+def _apply_persistent_overrides(dummy=None):
+    """
+    Se ejecuta CADA VEZ que se carga un archivo .blend.
+    Garantiza que el Monkey Patch y el RBAC nunca desaparezcan.
+    """
+    # 1. Extraer variables de entorno vitales
     project_root = os.environ.get("OPENSTUDIO_PROJECT_ROOT", "")
     prod_folder = os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "02_archivos_de_produccion")
-    project_id = os.environ.get("OPENSTUDIO_KITSU_PROJECT_ID", "")
-    target_file = os.environ.get("OPENSTUDIO_TARGET_FILE", "")
-    entity_type = os.environ.get("OPENSTUDIO_KITSU_ENTITY_TYPE", "").upper()
+    user_role = os.environ.get("OPENSTUDIO_USER_ROLE", "artist").lower()
     
-    kitsu_user = os.environ.get("OPENSTUDIO_KITSU_USER", "")
-    kitsu_pwd = os.environ.get("OPENSTUDIO_KITSU_PWD", "")
-    kitsu_host = os.environ.get("OPENSTUDIO_KITSU_HOST", "")
+    kitsu_mod = _get_kitsu_module()
     
-    print(f"[OPENSTUDIO HUB] Contexto -> Rol: {user_role.upper()} | Tarea: {task_type.upper()}")
-    
-    # 2. Activar herramientas y add-ons
-    kitsu_module = _activar_herramientas_contextuales(task_type)
-    
-    _inyectar_splash_screen()
-    
-    # 3. Preferencias Globales Físicas y Autenticación
-    if kitsu_module:
-        _configurar_preferencias_estudio(kitsu_module, project_root, prod_folder)
-        if kitsu_user and kitsu_pwd and kitsu_host:
-            _autenticar_kitsu_silencioso(kitsu_host, kitsu_user, kitsu_pwd, kitsu_module, project_id)
-            
-    _blindar_asset_pipeline(project_root)
-    
-    # 4. Carga de Archivo y Contexto Kitsu (Strict Mode)
-    if target_file and os.path.exists(target_file):
-        print(f"[OPENSTUDIO HUB] Cargando archivo de producción: {target_file}")
+    # 2. Re-aplicar Monkey Patch del VFS
+    if kitsu_mod and project_root:
         try:
-            bpy.ops.wm.open_mainfile(filepath=target_file)
+            kitsu_prefs_mod = importlib.import_module(f"{kitsu_mod.__name__}.prefs")
             
-            # Autodetección nativa de Kitsu tras abrir el archivo
-            if kitsu_module and hasattr(bpy.ops.kitsu, "con_detect_context"):
-                print("[OPENSTUDIO HUB] Invocando autodetector nativo de Kitsu...")
-                bpy.ops.kitsu.con_detect_context('EXEC_DEFAULT')
-                print("[OPENSTUDIO HUB] Auto-navegación completada con éxito.")
-
-            # =================================================================
-            # OVERRIDE: Si la topología es custom (Storyboard), el detector falla.
-            # Inyectamos el contexto de forma manual y absoluta.
-            # =================================================================
-            if entity_type == "SEQUENCE" or task_type in ["storyboard"]:
-                print("[OPENSTUDIO HUB] Topología custom detectada. Forzando contexto en memoria...")
-                _inyectar_cache_basica(kitsu_module, "SEQUENCE")
-            # =================================================================
-
-            # =================================================================
-            # FORZADO VISUAL DE WORKSPACE (Handshake Editorial)
-            # =================================================================
-            if task_type in ["edit", "editorial", "montaje"]:
-                ws_name = "Video Editing"
-                if ws_name in bpy.data.workspaces:
-                    bpy.context.window.workspace = bpy.data.workspaces[ws_name]
-                    print(f"[OPENSTUDIO HUB] Workspace forzado a: {ws_name} para Edición.")
-            elif task_type in ["storyboard"]:
-                ws_name = "Storyboard"
-                if ws_name in bpy.data.workspaces:
-                    bpy.context.window.workspace = bpy.data.workspaces[ws_name]
-            # =================================================================
+            def custom_project_root_dir_get(context):
+                pref_instance = kitsu_prefs_mod.addon_prefs_get(context)
+                return Path(pref_instance.project_root_dir) / prod_folder
                 
-        except Exception as e:
-            print(f"[OPENSTUDIO HUB] Advertencia: No se pudo abrir el archivo {e}")
-    else:
-        # El archivo NO existe. Aplicamos la regla estricta: Los artistas NO construyen.
-        print(f"[OPENSTUDIO HUB] ADVERTENCIA: El archivo base no existe en la ruta esperada: {target_file}")
-        if user_role in ["lead", "supervisor", "td", "manager"]:
-            print("[OPENSTUDIO HUB] Modo Administrador: Puedes utilizar el Shot Builder manualmente si lo deseas.")
-            _inyectar_cache_basica(kitsu_module, entity_type)
-        else:
-            print("[OPENSTUDIO HUB] BLOQUEO RBAC: Los Artistas/Vendors no están autorizados a inicializar archivos.")
-            _inyectar_cache_basica(kitsu_module, entity_type)
+            kitsu_prefs_mod.project_root_dir_get = custom_project_root_dir_get
 
-    # 5. Aplicar Guardrails (Jailing UI)
+            # Parche de clase (Evita el hardcodeo del add-on)
+            if hasattr(kitsu_prefs_mod, "KITSU_addon_preferences"):
+                def custom_project_root_path(self):
+                    return Path(self.project_root_dir) / prod_folder
+                
+                kitsu_prefs_mod.KITSU_addon_preferences.project_root_path = custom_project_root_path
+
+
+        except Exception as e:
+            print(f"[OPENSTUDIO HUB] Error en Monkey Patch: {e}")
+
+    # 3. Re-aplicar Guardrails (Jailing RBAC)
     if user_role not in ["lead", "supervisor", "td"]:
-        _aplicar_guardrails_rbac()
-        
-    print("="*50 + "\n")
-    return None
-
-def _activar_herramientas_contextuales(task_type: str) -> str:
-    base_addons = ["blender_kitsu"]
-    kitsu_real_module = "blender_kitsu"
-    
-    if task_type in ["modeling", "rigging", "surfacing", "texturing", "lookdev"]:
-        base_addons.append("asset_pipeline")
-        
-    if task_type in ["animation", "anim"]:
-        base_addons.extend(["pose_library", "rigify"])
-    elif task_type in ["lookdev", "lighting"]:
-        base_addons.extend(["node_wrangler"])
-        
-    modulos_instalados = [mod.__name__ for mod in addon_utils.modules()]
-    
-    for base_name in base_addons:
-        real_module = next((mod for mod in modulos_instalados if mod.endswith(base_name)), base_name)
-        if base_name == "blender_kitsu":
-            kitsu_real_module = real_module
+        @classmethod
+        def poll_restringido(cls, context):
+            return False 
             
-        try:
-            bpy.ops.preferences.addon_enable(module=real_module)
-        except Exception as e:
-            print(f"[OPENSTUDIO HUB] Fallo al habilitar {real_module}: {e}")
+        if hasattr(bpy.types, "ASSETPIPE_OT_force_push"):
+            bpy.types.ASSETPIPE_OT_force_push.poll = poll_restringido
             
-    return kitsu_real_module
+        if hasattr(bpy.types, "OPENSTUDIO_OT_override_sanity"):
+            bpy.types.OPENSTUDIO_OT_override_sanity.poll = poll_restringido
 
-def _configurar_preferencias_estudio(kitsu_module: str, project_root: str, prod_folder: str):
-    prefs = bpy.context.preferences.addons.get(kitsu_module)
-    if not prefs: return
-    
-    addon_prefs = prefs.preferences
+# =================================================================
+# 3. SECUENCIA DE ARRANQUE INICIAL (One-Shot Timer)
+# =================================================================
+def _startup_sequence():
+    """
+    Función de un solo uso. Configura preferencias, abre el archivo,
+    y establece la sesión. Retorna None para que el timer se autodestruya.
+    """
     try:
-        if project_root and hasattr(addon_prefs, "project_root_dir"):
-            addon_prefs.project_root_dir = project_root
-            
-        if hasattr(addon_prefs, "version_control"):
-            addon_prefs.version_control = True
-            
-        # =================================================================
-        # INYECCIÓN DE DIRECTORIOS (VFS ALIGNMENT)
-        # =================================================================
-        # Kitsu ya encadena internamente "pro/" o "pre/", por lo tanto
-        # inyectamos los nombres de los directorios en su estado puro.
-        if hasattr(addon_prefs, "shot_dir_name"):
-            addon_prefs.shot_dir_name = "shots"
-        if hasattr(addon_prefs, "asset_dir_name"):
-            addon_prefs.asset_dir_name = "assets"
-        if hasattr(addon_prefs, "seq_dir_name"):
-            addon_prefs.seq_dir_name = "strips"
-        if hasattr(addon_prefs, "edit_dir_name"):
-            addon_prefs.edit_dir_name = "edit"
-        
-        # --- NUEVO: INYECCIÓN DE RUTAS DE PLAYBLASTS ---
 
-        vfs_root = Path(project_root) / prod_folder
-        footage_dir = vfs_root / "edit" / "footage"
-        
-        if hasattr(addon_prefs, "shot_playblast_root_dir"):
-            addon_prefs.shot_playblast_root_dir = str(footage_dir / "pro")
-        if hasattr(addon_prefs, "seq_playblast_root_dir"):
-            addon_prefs.seq_playblast_root_dir = str(footage_dir / "pre")
-        if hasattr(addon_prefs, "frames_root_dir"):
-            addon_prefs.frames_root_dir = str(footage_dir / "post")
-        # -----------------------------------------------
-            
-        # =================================================================
-        # MONKEY-PATCHING: Sobrescribir función hardcodeada de Kitsu
-        # =================================================================
-        kitsu_prefs_mod = importlib.import_module(f"{kitsu_module}.prefs")
-        
-        def custom_project_root_dir_get(context):
-            pref_instance = kitsu_prefs_mod.addon_prefs_get(context)
-            # Reemplazamos el hardcoded 'project_files' por el nombre del directorio
-            # dinámico definido en la configuración maestro del estudio.
-            return Path(pref_instance.project_root_dir) / prod_folder
-            
-        kitsu_prefs_mod.project_root_dir_get = custom_project_root_dir_get
-        print(f"[OPENSTUDIO HUB] Monkey-Patch Exitoso: Rutas de Kitsu enrutadas hacia {prod_folder}.")
-            
-    except Exception as e:
-        print(f"[OPENSTUDIO HUB] Advertencia al configurar preferencias Kitsu: {e}")
+        print("\n" + "="*50)
+        print("[OPENSTUDIO HUB] Iniciando Secuencia de Arranque...")
 
-def _blindar_asset_pipeline(project_root: str):
-    if not project_root: return
-    modulos_instalados = [mod.__name__ for mod in addon_utils.modules()]
-    ap_module = next((mod for mod in modulos_instalados if mod.endswith("asset_pipeline")), None)
-    
-    if ap_module:
-        prefs_ap = bpy.context.preferences.addons.get(ap_module)
-        if prefs_ap:
-            try:
-                if hasattr(prefs_ap.preferences, "project_directory"):
-                    prefs_ap.preferences.project_directory = project_root
-                elif hasattr(prefs_ap.preferences, "project_dir"):
-                    prefs_ap.preferences.project_dir = project_root
-            except Exception:
-                pass
-
-def _autenticar_kitsu_silencioso(kitsu_host: str, kitsu_user: str, kitsu_pwd: str, kitsu_module: str, project_id: str):
-    try:
-        prefs = bpy.context.preferences.addons.get(kitsu_module)
-        if not prefs: return
-            
-        addon_prefs = prefs.preferences
-        addon_prefs.host = kitsu_host
-        addon_prefs.email = kitsu_user
-        addon_prefs.passwd = kitsu_pwd
+        target_file = os.environ.get("OPENSTUDIO_TARGET_FILE", "")
+        task_type = os.environ.get("OPENSTUDIO_TASK_TYPE", "generic").lower()
+        entity_type = os.environ.get("OPENSTUDIO_KITSU_ENTITY_TYPE", "").upper()
         
-        if hasattr(bpy.ops.kitsu, "session_start"):
-            bpy.ops.kitsu.session_start('EXEC_DEFAULT')
+        kitsu_user = os.environ.get("OPENSTUDIO_KITSU_USER", "")
+        kitsu_pwd = os.environ.get("OPENSTUDIO_KITSU_PWD", "")
+        kitsu_host = os.environ.get("OPENSTUDIO_KITSU_HOST", "")
+        project_id = os.environ.get("OPENSTUDIO_KITSU_PROJECT_ID", "")
+        project_root = os.environ.get("OPENSTUDIO_PROJECT_ROOT", "")
+        prod_folder = os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "02_archivos_de_produccion")
+
+        addon_key = _get_kitsu_addon_key()
+        
+        # 1. Configurar Preferencias Físicas y Credenciales
+        if addon_key in bpy.context.preferences.addons:
+            addon_prefs = bpy.context.preferences.addons[addon_key].preferences
             
-            if hasattr(bpy.ops.kitsu, "con_productions_load"):
-                bpy.ops.kitsu.con_productions_load('EXEC_DEFAULT')
-                
-            if project_id:
+            # Enrutamiento de Kitsu
+            if project_root and hasattr(addon_prefs, "project_root_dir"):
+                addon_prefs.project_root_dir = project_root
+            if hasattr(addon_prefs, "version_control"): addon_prefs.version_control = True
+            if hasattr(addon_prefs, "shot_dir_name"): addon_prefs.shot_dir_name = "shots"
+            if hasattr(addon_prefs, "asset_dir_name"): addon_prefs.asset_dir_name = "assets"
+            if hasattr(addon_prefs, "seq_dir_name"): addon_prefs.seq_dir_name = "strips"
+            if hasattr(addon_prefs, "edit_dir_name"): addon_prefs.edit_dir_name = "edit"
+            
+            # Enrutamiento de Playblasts
+            vfs_root = Path(project_root) / prod_folder
+            footage_dir = vfs_root / "edit" / "footage"
+            if hasattr(addon_prefs, "shot_playblast_root_dir"): addon_prefs.shot_playblast_root_dir = str(footage_dir / "pro")
+            if hasattr(addon_prefs, "seq_playblast_root_dir"): addon_prefs.seq_playblast_root_dir = str(footage_dir / "pre")
+            if hasattr(addon_prefs, "frames_root_dir"): addon_prefs.frames_root_dir = str(footage_dir / "post")
+
+            # Autenticación RAM
+            if kitsu_user and kitsu_pwd:
+                addon_prefs.host = kitsu_host
+                addon_prefs.email = kitsu_user
+                addon_prefs.passwd = kitsu_pwd
                 try:
-                    kitsu_cache = importlib.import_module(f"{kitsu_module}.cache")
-                    kitsu_cache.project_active_set_by_id(bpy.context, project_id)
-                    addon_prefs.project_active_id = project_id 
-                except Exception as cache_err:
-                    print(f"[OPENSTUDIO HUB] Error inyectando caché de proyecto: {cache_err}")
+                    bpy.ops.kitsu.session_start('EXEC_DEFAULT')
+                    bpy.ops.kitsu.con_productions_load('EXEC_DEFAULT')
+                    if project_id:
+                        kitsu_mod = _get_kitsu_module()
+                        if kitsu_mod:
+                            kitsu_mod.cache.project_active_set_by_id(bpy.context, project_id)
+                        addon_prefs.project_active_id = project_id 
+                except Exception as e:
+                    print(f"[OPENSTUDIO HUB] Error al autenticar: {e}")
+
+        # 2. Carga del Archivo Maestro
+        if target_file and os.path.exists(target_file):
+            print(f"[OPENSTUDIO HUB] Cargando archivo de producción: {target_file}")
+            try:
+                bpy.ops.wm.open_mainfile(filepath=target_file)
                 
+                # Autodetección o forzado de contexto
+                if hasattr(bpy.ops.kitsu, "con_detect_context"):
+                    bpy.ops.kitsu.con_detect_context('EXEC_DEFAULT')
+                    
+                # Forzado Visual de Workspaces
+                ws_map = {"edit": "Video Editing", "editorial": "Video Editing", "montaje": "Video Editing", "storyboard": "Storyboard"}
+                ws_name = ws_map.get(task_type)
+                if ws_name and ws_name in bpy.data.workspaces:
+                    bpy.context.window.workspace = bpy.data.workspaces[ws_name]
+                    
+            except Exception as e:
+                print(f"[OPENSTUDIO HUB] Fallo al abrir archivo: {e}")
+        else:
+            print(f"[OPENSTUDIO HUB] ADVERTENCIA: Archivo base inexistente en {target_file}")
+
+        print("="*50 + "\n")
+        return None # Destruye el timer para evitar ejecuciones repetidas
+
     except Exception as e:
-        print(f"[OPENSTUDIO HUB] Fallo al inyectar credenciales: {e}")
+        print(f"[OPENSTUDIO HUB] ❌ ERROR FATAL EN ARRANQUE: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        print("="*50 + "\n")
+        # GARANTÍA ABSOLUTA DE DESTRUCCIÓN DEL TIMER
+        return None 
 
-def _inyectar_cache_basica(kitsu_module: str, entity_type: str):
-    """Inyecta el contexto visualmente en Kitsu si el archivo físico aún no existe."""
-    try:
-        kitsu_cache = importlib.import_module(f"{kitsu_module}.cache")
-        entity_id = os.environ.get("OPENSTUDIO_KITSU_ENTITY_ID", "")
-        task_type_id = os.environ.get("OPENSTUDIO_KITSU_TASK_TYPE_ID", "")
-        seq_id = os.environ.get("OPENSTUDIO_KITSU_SEQUENCE_ID", "")
-
-        if entity_type == "SHOT" and entity_id:
-            seq_id = os.environ.get("OPENSTUDIO_KITSU_SEQUENCE_ID", "")
-            if seq_id:
-                kitsu_cache.sequence_active_set_by_id(bpy.context, seq_id)
-            kitsu_cache.shot_active_set_by_id(bpy.context, entity_id)
-            
-        elif entity_type == "ASSET" and entity_id:
-            asset_type_id = os.environ.get("OPENSTUDIO_KITSU_ASSET_TYPE_ID", "")
-            if asset_type_id:
-                kitsu_cache.asset_type_active_set_by_id(bpy.context, asset_type_id)
-            kitsu_cache.asset_active_set_by_id(bpy.context, entity_id)
-
-        elif entity_type == "SEQUENCE":
-            target_id = entity_id if entity_id else seq_id
-            if target_id:
-                kitsu_cache.sequence_active_set_by_id(bpy.context, target_id)
-
-        if task_type_id:
-            kitsu_cache.task_type_active_set_by_id(bpy.context, task_type_id)
-
-    except Exception:
-        pass
-
-def _inyectar_splash_screen():
-    """Sobrescribe la UI de Blender para cargar el Splash Screen corporativo del proyecto."""
-    splash_path = os.environ.get("OPENSTUDIO_SPLASH_PATH", "")
-    
-    if not splash_path or not os.path.exists(splash_path):
-        return
+# =================================================================
+# 4. REGISTRO EN EL MOTOR DE BLENDER
+# =================================================================
+def register():
+    # Registrar el hook persistente
+    if _apply_persistent_overrides not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_apply_persistent_overrides)
         
-    def custom_splash_handler(dummy=None):
-        import bpy
-        from pathlib import Path
-        img_name = Path(splash_path).name
-        
-        # Cargar a memoria solo si no existe
-        if img_name not in bpy.data.images:
-            bpy.data.images.load(splash_path)
-            
-        try:
-            bpy.context.preferences.view.splash_image = img_name
-        except Exception as e:
-            print(f"[OPENSTUDIO HUB] Fallo al aplicar imagen splash: {e}")
-            
-    # Añadimos el handler para que Blender lo dibuje al terminar de inicializar
-    import bpy
-    bpy.app.handlers.load_post.append(custom_splash_handler)
-    print(f"[OPENSTUDIO HUB] Splash Screen programado: {splash_path}")
-
-def _aplicar_guardrails_rbac():
-    @classmethod
-    def poll_restringido(cls, context):
-        return False 
-        
-    if hasattr(bpy.types, "ASSETPIPE_OT_force_push"):
-        bpy.types.ASSETPIPE_OT_force_push.poll = poll_restringido
-        
-    if hasattr(bpy.types, "OPENSTUDIO_OT_override_sanity"):
-        bpy.types.OPENSTUDIO_OT_override_sanity.poll = poll_restringido
+    # Disparar la secuencia de arranque un instante después de que la UI respire
+    bpy.app.timers.register(_startup_sequence, first_interval=0.1)
 
 if __name__ == "__main__":
-    bpy.app.timers.register(_setup_openstudio_environment, first_interval=1.0)
+    register()

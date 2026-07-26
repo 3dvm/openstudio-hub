@@ -8,8 +8,13 @@ from PySide6.QtCore import Qt, Signal
 
 class PipelineStepNode(QWidget):
     """Nodo individual de la barra de progreso (Círculo + Título)."""
+    
+    clicked = Signal(int)
+
     def __init__(self, step_number: int, title: str):
         super().__init__()
+        self.step_number = step_number
+
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignCenter)
         layout.setSpacing(10)
@@ -24,7 +29,13 @@ class PipelineStepNode(QWidget):
         layout.addWidget(self.node_circle, alignment=Qt.AlignCenter)
         layout.addWidget(self.lbl_title, alignment=Qt.AlignCenter)
         
+        self.setCursor(Qt.PointingHandCursor)
         self.set_state(is_active=False, is_completed=False)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.step_number)
+        return super().mousePressEvent(event)
 
     def set_state(self, is_active: bool, is_completed: bool):
         # Asignación semántica para el QSS global
@@ -35,9 +46,11 @@ class PipelineStepNode(QWidget):
         elif is_active:
             self.node_circle.setObjectName("StepNodeActive")
             self.lbl_title.setObjectName("StepTitleActive")
+            self.node_circle.setText( str(self.step_number) )
         else:
             self.node_circle.setObjectName("StepNodePending")
             self.lbl_title.setObjectName("StepTitlePending")
+            self.node_circle.setText( str(self.step_number) )
         
         # Forzar refresco de estilos en Qt
         self.node_circle.style().polish(self.node_circle)
@@ -47,6 +60,8 @@ class PipelineStepNode(QWidget):
 class PipelineWizardWidget(QFrame):
     """Barra de progreso secuencial y orquestador de Batch Creation."""
     action_requested = Signal(int) # Emite el paso actual (1=Storyboard, 2=Edit...)
+
+    step_changed = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -78,6 +93,9 @@ class PipelineWizardWidget(QFrame):
         for i, title in enumerate(self.steps_data):
             # Crear Nodo
             node = PipelineStepNode(i + 1, title)
+            
+            node.clicked.connect(self.step_changed.emit)
+
             self._nodes.append(node)
             progress_layout.addWidget(node)
 
