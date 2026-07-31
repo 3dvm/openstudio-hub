@@ -1,7 +1,5 @@
 {
-    "studio_profile": {
-        "name": "Kitsu"
-    },
+    "studio_profile": {},
     "vcs_engine": {
         "local_workspace_root": {
             "windows": "/home/macuare/openstudio_projects",
@@ -22,7 +20,7 @@
         "vfs_local": "local",
         "vfs_pipeline": "pipeline",
         "custom_dirs": [
-            "refs",
+            "brief_refs",
             "renders"
         ]
     },

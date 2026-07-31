@@ -17,6 +17,8 @@ Oculta la destrucción de caché detrás de un QDialog modal accesible desde la 
 Utiliza internacionalización nativa de Qt (i18n) a través de self.tr().
 """
 
+from _version import __version__
+
 from pathlib import Path
 
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
@@ -318,7 +320,7 @@ class ViewLogin(QWidget):
         self.btn_forgot.setFlat(True)
         links_layout.addWidget(self.btn_forgot, alignment=Qt.AlignLeft)
         
-        lbl_version = QLabel("Version 0.7.1")
+        lbl_version = QLabel(f"Version {__version__}")
         lbl_version.setStyleSheet("color: #64748B; font-size: 11px;")
         links_layout.addWidget(lbl_version, alignment=Qt.AlignRight)
         

@@ -32,28 +32,53 @@ class ThumbnailWorker(QThread):
     image_downloaded = Signal(bytes)
     error_occurred = Signal(str)
 
-    def __init__(self, preview_id: str, token: str, host_url: str):
+    def __init__(self, entity_id: str, token: str, host_url: str):
         super().__init__()
-        self.preview_id = preview_id
+        self.entity_id = entity_id
         self.token = token
         self.host_url = host_url
 
     def run(self):
-        if not self.preview_id:
-            self.error_occurred.emit("No Thumbnail Available")
+        if not self.entity_id:
+            self.error_occurred.emit("No Entity ID Available")
             return
 
         try:
-            img_url = f"{self.host_url}/pictures/thumbnails/preview-files/{self.preview_id}.png"
-            headers = {"Authorization": f"Bearer {self.token}"}
+            headers = {
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json"
+            }
+
+            entity_url = f"{self.host_url}/data/entities/{self.entity_id}"
+
+            ent_resp = requests.get(entity_url, headers=headers, timeout=10)
+            if ent_resp.status_code != 200:
+                self.error_occurred.emit(f"Entity not found (HTTP {ent_resp.status_code})")
+                return
             
-            response = requests.get(img_url, headers=headers, timeout=10)
+            entity_data = ent_resp.json()
+            preview_id = entity_data.get("preview_file_id")
             
-            if response.status_code == 200:
-                self.image_downloaded.emit(response.content)
+            if not preview_id:
+                self.error_occurred.emit("Entity has no preview image")
+                return
+
+            img_url = f"{self.host_url}/pictures/thumbnails/preview-files/{preview_id}.png"
+            img_resp = requests.get(img_url, headers=headers, timeout=10)
+
+            print(f"[DEBUG WORKER] Pidiendo imagen a: {img_url}")
+
+            #headers = {"Authorization": f"Bearer {self.token}"}
+            
+            #response = requests.get(img_url, headers=headers, timeout=10)
+
+            #print(f"[DEBUG WORKER] Respuesta: HTTP {response.status_code} | Peso: {len(response.content)} bytes")
+            
+            if img_resp.status_code == 200:
+                self.image_downloaded.emit(img_resp.content)
             else:
-                self.error_occurred.emit("Thumbnail not found on server")
-                
+                self.error_occurred.emit(f"Thumbnail not found (HTTP {img_resp.status_code})")
+            
         except Exception as e:
             print(f"[UI THUMBNAIL ERROR] Download failed: {e}")
             self.error_occurred.emit("Network connection error")
@@ -285,11 +310,28 @@ class TaskCard(QFrame):
         main_layout.addLayout(btn_layout)
 
     def _cargar_miniatura(self):
-        preview_id = self.task_data.get("preview_file_id")
+        entity_id = self.task_data.get("entity_id")
+        
+        # 2. Extraemos el ID del archivo de previsualización de la entidad
+        # preview_id = entity_data.get("preview_file_id")
+        #
+        # task_name = self.task_data.get('name', 'Unknown')
+        # print(f"\n[DEBUG THUMB] Tarea: '{task_name}' | Preview ID extraído: {preview_id}")
+        
+        # Fallback por si Gazu devuelve la data aplanada
+        # if not preview_id:
+        #     print(f"[DEBUG THUMB] ❌ Cancelando descarga: preview_id es nulo o vacío.")
+        #     preview_id = self.task_data.get("preview_file_id")
+
+        if not entity_id:
+            print(f"[DEBUG THUMB] ❌ Cancelando descarga: preview_id es nulo o vacío.")
+            self._on_thumbnail_error("No preview image mapped")
+            return
+
         token = self.auth_manager.get_current_token()
         base_url = self.auth_manager.kitsu_host
         
-        self.worker = ThumbnailWorker(preview_id, token, base_url)
+        self.worker = ThumbnailWorker(entity_id, token, base_url)
         self.worker.image_downloaded.connect(self._on_thumbnail_ready)
         self.worker.error_occurred.connect(self._on_thumbnail_error)
         self.worker.finished.connect(self.worker.deleteLater)
@@ -299,7 +341,7 @@ class TaskCard(QFrame):
         image = QImage.fromData(img_bytes)
         if not image.isNull():
             pixmap = QPixmap.fromImage(image)
-            pixmap = pixmap.scaled(self.thumb_frame.width(), self.thumb_frame.height(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            pixmap = pixmap.scaled(self.thumb_stack.width(), self.thumb_stack.height(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
             self.thumb_label.setPixmap(pixmap)
             self.thumb_label.setText("") 
 

@@ -19,15 +19,16 @@ respetando el patrón MVC y el Principio de Responsabilidad Única.
 
 import subprocess
 import json
+#import urllib.parse
 from pathlib import Path
 from typing import Callable
 
 from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QLabel, 
                                QPushButton, QWidget, QToolButton, QMenu,
                                QDialog, QLineEdit, QMessageBox, QApplication,
-                               QStackedWidget)
+                               QStackedWidget, QSizePolicy)
 from PySide6.QtCore import Qt, QThread, Signal, QUrl
-from PySide6.QtGui import QPixmap, QImage, QCursor, QAction, QDesktopServices, QPainter, QColor, QIcon
+from PySide6.QtGui import QPixmap, QImage, QCursor, QAction, QDesktopServices, QColor, QIcon
 
 from core.kitsu_manager import KitsuManager
 from core.nas_manager import NasManager
@@ -164,7 +165,7 @@ class ProjectCard(QFrame):
         main_layout.setSpacing(10)
 
         # ---------------------------------------------------------
-        # Fila 1: Cabecera (Estado del proyecto y Menú)
+        # Fila 1: Cabecera (Estado del proyecto y Menú de Contexto)
         # ---------------------------------------------------------
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
@@ -175,39 +176,43 @@ class ProjectCard(QFrame):
         
         header_layout.addStretch()
         
+        # Menú de Contexto (Los 3 puntitos)
         self.btn_options = QToolButton()
         self.btn_options.setText("⋮")
         self.btn_options.setCursor(QCursor(Qt.PointingHandCursor))
-        self.btn_options.setStyleSheet("QToolButton { background: transparent; color: #94A3B8; font-size: 20px; font-weight: bold; border: none; padding-bottom: 5px; } QToolButton:hover { color: #F8FAFC; } QToolButton::menu-indicator { image: none; }")
+        self.btn_options.setStyleSheet("""
+            QToolButton { background: transparent; color: #94A3B8; font-size: 20px; font-weight: bold; border: none; padding-bottom: 5px; } 
+            QToolButton:hover { color: #F8FAFC; } 
+            QToolButton::menu-indicator { image: none; }
+        """)
         self.btn_options.setPopupMode(QToolButton.InstantPopup)
         
         self.options_menu = QMenu(self)
-        self.options_menu.setStyleSheet("QMenu { background-color: #0F172A; color: #F8FAFC; border: 1px solid #334155; border-radius: 6px; } QMenu::item { padding: 8px 25px; } QMenu::item:selected { background-color: #3B82F6; }")
+        # Inyectamos estilos para el menú y un pseudo-clase para el botón rojo
+        self.options_menu.setStyleSheet("""
+            QMenu { background-color: #0F172A; color: #F8FAFC; border: 1px solid #334155; border-radius: 6px; } 
+            QMenu::item { padding: 8px 25px; } 
+            QMenu::item:selected { background-color: #3B82F6; }
+        """)
         
-        action_kitsu_shots = QAction(self.tr("🎬 Edit Shots"), self)
-        action_kitsu_breakdown = QAction(self.tr("📝 Script Breakdown"), self)
-        action_kitsu_team = QAction(self.tr("👥 Manage Team"), self)
-        action_kitsu_settings = QAction(self.tr("⚙️ Project Settings"), self)
+        # Acción Esporádica de Configuración
+        action_config = QAction(self.tr("⚙️ Configure Project"), self)
+        action_config.triggered.connect(lambda: self._abrir_kitsu_interno("/production-settings"))
+        self.options_menu.addAction(action_config)
         
-        action_kitsu_shots.triggered.connect(lambda: self._abrir_ruta_kitsu("/shots"))
-        action_kitsu_breakdown.triggered.connect(lambda: self._abrir_ruta_kitsu("/breakdown"))
-        action_kitsu_team.triggered.connect(lambda: self._abrir_ruta_kitsu("/team"))
-        action_kitsu_settings.triggered.connect(lambda: self._abrir_ruta_kitsu("/production-settings"))
-        
-
-        self.options_menu.addAction(action_kitsu_shots)
-        self.options_menu.addAction(action_kitsu_breakdown)
-        self.options_menu.addAction(action_kitsu_team)
-        self.options_menu.addAction(action_kitsu_settings)
-        
-        # Opciones destructivas solo para admin
+        # Acciones Peligrosas / Administrativas
         if self.user_role == "td":
-            action_archive = QAction(self.tr("📦 Archive Project"), self)
-            action_delete = QAction(self.tr("🗑️ Delete Project"), self)
-            action_delete.triggered.connect(self._on_delete_requested)
             self.options_menu.addSeparator()
+            action_archive = QAction(self.tr("📦 Archive Project"), self)
             self.options_menu.addAction(action_archive)
             self.options_menu.addSeparator()
+            
+            # Pseudo-truco en PySide6: Usar HTML en el texto de QAction suele ser ignorado en macOS/Windows, 
+            # pero funciona en el estilo Fusion de Linux. Para asegurar el rojo, creamos un icono rojo dinámico.
+            red_pixmap = QPixmap(12, 12)
+            red_pixmap.fill(QColor("#EF4444"))
+            action_delete = QAction(QIcon(red_pixmap), self.tr("Delete Project"), self)
+            action_delete.triggered.connect(self._on_delete_requested)
             self.options_menu.addAction(action_delete)
 
         self.btn_options.setMenu(self.options_menu)
@@ -215,113 +220,142 @@ class ProjectCard(QFrame):
         main_layout.addLayout(header_layout)
 
         # ---------------------------------------------------------
-        # Fila 2: Miniatura del Proyecto
+        # Fila 2: Miniatura del Proyecto (QStackedWidget)
         # ---------------------------------------------------------
-        # self.thumb_label = QLabel(self.tr("Loading thumbnail..."))
-        # self.thumb_label.setAlignment(Qt.AlignCenter)
-        # self.thumb_label.setFixedHeight(140)
-        # self.thumb_label.setStyleSheet("background-color: #0F172A; border-radius: 8px; color: #475569; font-style: italic;")
-        # main_layout.addWidget(self.thumb_label)
-
-        # 2. Miniatura (Reemplazado por QStackedWidget)
+        # ... (Mantén aquí el mismo código de self.thumb_stack y sus páginas que tenías) ...
         self.thumb_stack = QStackedWidget()
-        self.thumb_stack.setFixedHeight(140)
+        self.thumb_stack.setFixedHeight(130)
         self.thumb_stack.setStyleSheet("QStackedWidget { background-color: #0F172A; border-radius: 8px; border: 1px solid #1E293B; }")
         
-        # --- Página 0: Placeholder ---
         self.page_placeholder = QWidget()
         placeholder_layout = QVBoxLayout(self.page_placeholder)
         placeholder_layout.setAlignment(Qt.AlignCenter)
-        placeholder_layout.setSpacing(10)
-        
-        self.lbl_placeholder_icon = QLabel()
-        self.lbl_placeholder_icon.setAlignment(Qt.AlignCenter)
-        
-        # Intentar cargar el SVG del proyecto
-        icon_path = Path("assets/icons/project-placeholder.svg")
-        if icon_path.exists():
-            base_pixmap = QIcon(str(icon_path)).pixmap(55, 55)
-
-            # 2. QPainter tiñe la imagen preservando la transparencia (Alpha)
-            painter = QPainter(base_pixmap)
-            painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
-            painter.fillRect(base_pixmap.rect(), QColor("#64748B"))
-            painter.end()
-
-            self.lbl_placeholder_icon.setPixmap(base_pixmap)
-        else:
-            self.lbl_placeholder_icon.setText("📁") # Fallback extremo si no existe el SVG
-            self.lbl_placeholder_icon.setStyleSheet("font-size: 40px; background: transparent;")
-            
         self.lbl_placeholder_text = QLabel(self.tr("AWESOME PROJECT"))
-        self.lbl_placeholder_text.setAlignment(Qt.AlignCenter)
-        self.lbl_placeholder_text.setStyleSheet("color: #64748B; font-size: 10px; font-weight: bold; letter-spacing: 1px; background: transparent;")
-        
-        placeholder_layout.addStretch()
-        placeholder_layout.addWidget(self.lbl_placeholder_icon)
+        self.lbl_placeholder_text.setStyleSheet("color: #64748B; font-size: 10px; font-weight: bold;")
         placeholder_layout.addWidget(self.lbl_placeholder_text)
-        placeholder_layout.addStretch()
         
-        # --- Página 1: Imagen Real ---
         self.thumb_label = QLabel()
         self.thumb_label.setAlignment(Qt.AlignCenter)
         self.thumb_label.setStyleSheet("border-radius: 8px; background-color: transparent;")
         
-        self.thumb_stack.addWidget(self.page_placeholder) # Index 0
-        self.thumb_stack.addWidget(self.thumb_label)       # Index 1
-        
+        self.thumb_stack.addWidget(self.page_placeholder)
+        self.thumb_stack.addWidget(self.thumb_label)
         main_layout.addWidget(self.thumb_stack)
 
-
         # ---------------------------------------------------------
-        # Fila 3: Título del Proyecto y Badge Dinámico
+        # Fila 3 y 4: Títulos y Sincronización
         # ---------------------------------------------------------
         title_layout = QHBoxLayout()
-        title_layout.setContentsMargins(0, 5, 0, 0)
-        
         self.project_name = self.project_data.get("name", self.tr("Unknown Project"))
         self.lbl_title = QLabel(self.project_name)
         self.lbl_title.setStyleSheet("color: #F8FAFC; font-size: 15px; font-weight: bold;")
         title_layout.addWidget(self.lbl_title)
-        
         title_layout.addStretch()
         
         self.lbl_badge = QLabel(self.tr("Checking..."))
         self.lbl_badge.setAlignment(Qt.AlignCenter)
-        self.lbl_badge.setFixedHeight(22)
-        self.lbl_badge.setStyleSheet("background-color: #0F172A; color: #94A3B8; border: 1px solid #334155; border-radius: 6px; padding: 0 8px; font-size: 10px; font-weight: bold;")
+        self.lbl_badge.setStyleSheet("background-color: #0F172A; color: #94A3B8; border: 1px solid #334155; border-radius: 6px; padding: 2px 8px; font-size: 10px; font-weight: bold;")
         title_layout.addWidget(self.lbl_badge)
         main_layout.addLayout(title_layout)
 
-        # ---------------------------------------------------------
-        # Fila 4: Footer (Estado de Sincronización Real del NAS y CTA Rebuild)
-        # ---------------------------------------------------------
-        footer_layout = QHBoxLayout()
-        footer_layout.setContentsMargins(0, 5, 0, 0)
-        
         self.lbl_sync_status = QLabel(self.tr("🗄️ Checking..."))
         self.lbl_sync_status.setStyleSheet("color: #94A3B8; font-size: 12px; font-weight: bold;")
-        footer_layout.addWidget(self.lbl_sync_status)
-        
-        footer_layout.addStretch()
-        
-        self.btn_rebuild = QPushButton(self.tr("Rebuild NAS"))
-        self.btn_rebuild.setCursor(Qt.PointingHandCursor)
-        self.btn_rebuild.setStyleSheet("QPushButton { border: 1px solid #F59E0B; color: #F59E0B; background: transparent; border-radius: 6px; font-weight: bold; font-size: 11px; padding: 4px 10px; } QPushButton:hover { background-color: rgba(245, 158, 11, 0.1); }")
-        self.btn_rebuild.setVisible(False)
-        self.btn_rebuild.clicked.connect(self._on_rebuild_clicked)
-        footer_layout.addWidget(self.btn_rebuild)
-        
-        main_layout.addLayout(footer_layout)
+        main_layout.addWidget(self.lbl_sync_status)
 
-        # 5. BOTÓN DE ACCIÓN (Artist & Manager Roles)
-        if self.user_role != "td" and self.config_factory:
-            self.btn_action = QPushButton()
-            self.btn_action.setFixedHeight(40)
-            self.btn_action.setCursor(Qt.PointingHandCursor)
-            main_layout.addWidget(self.btn_action)
-            # El estado de este botón se actualiza en _check_nas_status
+        # ---------------------------------------------------------
+        # Fila 5: Matriz Dinámica de Botones (CTA) por Rol
+        # ---------------------------------------------------------
+        self.actions_layout = QHBoxLayout()
+        self.actions_layout.setContentsMargins(0, 5, 0, 0)
+        self.actions_layout.setSpacing(10)
+        main_layout.addLayout(self.actions_layout)
 
+        # A) Construir el Split Button de Kitsu (Dropdown)
+        self.btn_kitsu_dropdown = QToolButton()
+        self.btn_kitsu_dropdown.setPopupMode(QToolButton.InstantPopup)
+        self.btn_kitsu_dropdown.setCursor(Qt.PointingHandCursor)
+        self.btn_kitsu_dropdown.setFixedHeight(35)
+        
+        kitsu_menu = QMenu(self)
+        kitsu_menu.setStyleSheet("QMenu { background-color: #0F172A; color: #F8FAFC; border: 1px solid #334155; border-radius: 6px; } QMenu::item { padding: 8px 25px; } QMenu::item:selected { background-color: #3B82F6; }")
+        
+        # Deeplinks Divulgación Progresiva
+        kitsu_menu.addAction("📦 To: Assets", lambda: self._abrir_kitsu_interno("/assets"))
+        kitsu_menu.addAction("🎬 To: Shots", lambda: self._abrir_kitsu_interno("/shots"))
+        kitsu_menu.addAction("🎞️ To: Sequences", lambda: self._abrir_kitsu_interno("/sequences"))
+        kitsu_menu.addAction("✂️ To: Edit", lambda: self._abrir_kitsu_interno("/edits"))
+        self.btn_kitsu_dropdown.setMenu(kitsu_menu)
+
+        # B) Construir el Ghost Button de Watchtower
+        self.btn_watchtower = QPushButton("🗼")
+        self.btn_watchtower.setFixedSize(35, 35)
+        self.btn_watchtower.setCursor(Qt.PointingHandCursor)
+        self.btn_watchtower.setToolTip(self.tr("Open Watchtower Dashboard"))
+        self.btn_watchtower.clicked.connect(self._on_watchtower_clicked)
+
+        # C) Construir el CTA Primario del Hub (Wizard / Launch)
+        self.btn_primary_action = QPushButton()
+        self.btn_primary_action.setFixedHeight(35)
+        self.btn_primary_action.setCursor(Qt.PointingHandCursor)
+
+        # MATRIZ DE RENDERIZADO POR ROL
+        if self.user_role == "td":
+            # TD Layout: Kitsu Dropdown (Orange) + Watchtower
+            self.btn_kitsu_dropdown.setText("Open in Kitsu ▼")
+            self.btn_kitsu_dropdown.setStyleSheet("""
+                QToolButton { background-color: #F97316; color: white; font-weight: bold; border-radius: 6px; padding: 0 15px; }
+                QToolButton:hover { background-color: #EA580C; }
+                QToolButton::menu-indicator { image: none; }
+            """)
+            self.btn_kitsu_dropdown.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            
+            self.btn_watchtower.setStyleSheet("""
+                QPushButton { background: transparent; border: 1px solid #334155; border-radius: 6px; font-size: 16px;}
+                QPushButton:hover { background-color: #334155; }
+            """)
+            
+            self.actions_layout.addWidget(self.btn_kitsu_dropdown)
+            self.actions_layout.addWidget(self.btn_watchtower)
+            self.btn_primary_action.hide() # El TD no usa el botón estándar primario aquí
+            
+        else:
+            # PM & Artist Layout: Primary Action (Orange/Blue) + Kitsu Ghost + Watchtower Ghost
+            self.btn_kitsu_dropdown.setText("🦊 ▼")
+            self.btn_kitsu_dropdown.setStyleSheet("""
+                QToolButton { background: transparent; color: #F97316; border: 1px solid #334155; border-radius: 6px; padding: 0 10px; font-weight: bold;}
+                QToolButton:hover { background-color: rgba(249, 115, 22, 0.1); border-color: #F97316; }
+                QToolButton::menu-indicator { image: none; }
+            """)
+            
+            self.actions_layout.addWidget(self.btn_primary_action, stretch=1)
+            self.actions_layout.addWidget(self.btn_kitsu_dropdown)
+            
+            if self.user_role == "manager":
+                self.btn_watchtower.setStyleSheet("""
+                    QPushButton { background: transparent; border: 1px solid #334155; border-radius: 6px; font-size: 16px;}
+                    QPushButton:hover { background-color: #334155; }
+                """)
+                self.actions_layout.addWidget(self.btn_watchtower)
+            else:
+                self.btn_watchtower.hide() #
+
+    def _abrir_kitsu_interno(self, sub_ruta: str):
+        """Genera el deeplink absoluto y lo envía al WebContext nativo del Hub."""
+        project_id = self.project_data.get("id")
+        kitsu_url = self.config_factory.get_kitsu_api_url()
+        
+        if kitsu_url.endswith("/api"):
+            kitsu_url = kitsu_url[:-4]
+            
+        full_url = f"{kitsu_url}/productions/{project_id}{sub_ruta}"
+        
+        main_win = self.window()
+        if hasattr(main_win, 'abrir_kitsu'):
+            main_win.abrir_kitsu(full_url)
+        else:
+            # Fallback seguro al navegador de OS
+            QDesktopServices.openUrl(QUrl(full_url))
+    
     def _abrir_ruta_kitsu(self, sub_ruta: str):
         """Enruta al usuario directamente a un módulo específico del proyecto en Kitsu."""
         project_id = self.project_data.get("id")
@@ -329,7 +363,18 @@ class ProjectCard(QFrame):
         url = self.kitsu_mgr.build_web_url(host, project_id, sub_ruta)
         if url: QDesktopServices.openUrl(QUrl(url))
 
+    def _on_watchtower_clicked(self):
+        """Enruta la petición de Watchtower al Orquestador pasándole la ruta física."""
+        if self.project_dir:
+            main_win = self.window()
+            if hasattr(main_win, 'abrir_watchtower'):
+                project_id = self.project_data.get("id", "")
+                main_win.abrir_watchtower(self.project_dir)
+        else:
+            QMessageBox.warning(self, "Watchtower", self.tr("The project must be mounted on your disk to visualize Watchtower."))
+
     def _check_nas_status(self):
+        """Actualiza estado y colores del botón Primario (Wizard / Launch / Install)."""
         p_name = self.project_data.get("name", "")
         p_code = self.project_data.get("code", "")
         self.project_dir = self.nas_mgr.resolve_project_dir(p_name, p_code)
@@ -342,43 +387,41 @@ class ProjectCard(QFrame):
         if is_installed and self.project_dir:
             self.lbl_sync_status.setText(self.tr("🗄️ 🟢 Ready on Disk"))
             self.lbl_sync_status.setStyleSheet("color: #10B981; font-size: 12px; font-weight: bold;")
-            self.btn_rebuild.setVisible(False)
             blueprint = self.nas_mgr.get_project_blueprint(self.project_dir)
             self.lbl_badge.setText(blueprint.get("blender_version", "Blender"))
             
             # Setup Action Button
-            if hasattr(self, 'btn_action'):
+            if hasattr(self, 'btn_primary_action') and self.user_role != "td":
                 if self.user_role == "manager":
-                    self.btn_action.setText(self.tr("Open Pipeline Wizard"))
-                    self.btn_action.setStyleSheet("background-color: #F59E0B; color: #0F172A; font-weight: bold; border-radius: 6px; border: none;")
-                    try: self.btn_action.clicked.disconnect()
+                    self.btn_primary_action.setText(self.tr("Pipeline Wizard"))
+                    self.btn_primary_action.setStyleSheet("background-color: #F59E0B; color: #0F172A; font-weight: bold; border-radius: 6px; border: none;")
+                    try: self.btn_primary_action.clicked.disconnect()
                     except RuntimeError: pass
                     
                     if self.on_open_wizard_callback:
-                        self.btn_action.clicked.connect(lambda: self.on_open_wizard_callback(self.project_name))
+                        self.btn_primary_action.clicked.connect(lambda: self.on_open_wizard_callback(self.project_name))
                 else:
-                    self.btn_action.setText(self.tr("Launch Project"))
-                    self.btn_action.setStyleSheet("background-color: #3B82F6; color: white; font-weight: bold; border-radius: 6px; border: none;")
-                    try: self.btn_action.clicked.disconnect()
+                    self.btn_primary_action.setText(self.tr("Launch Project"))
+                    self.btn_primary_action.setStyleSheet("background-color: #3B82F6; color: white; font-weight: bold; border-radius: 6px; border: none;")
+                    try: self.btn_primary_action.clicked.disconnect()
                     except RuntimeError: pass
                     
-                    self.btn_action.clicked.connect(lambda: self._lanzar_blender(self.project_dir))
+                    self.btn_primary_action.clicked.connect(lambda: self._lanzar_blender(self.project_dir))
         else:
             self.lbl_sync_status.setText(self.tr("🗄️ ⚪ Cloud Only"))
             self.lbl_sync_status.setStyleSheet("color: #94A3B8; font-size: 12px; font-weight: bold;")
             self.lbl_badge.setText(self.tr("Not Mounted"))
-            self.btn_rebuild.setVisible(self.user_role == "td")
             
             # Setup Action Button
-            if hasattr(self, 'btn_action'):
-                self.btn_action.setText(self.tr("Install Workspace ↓"))
-                self.btn_action.setStyleSheet("background-color: #10B981; color: #0F172A; font-weight: bold; border-radius: 6px; border: none;")
-                try: self.btn_action.clicked.disconnect()
+            if hasattr(self, 'btn_primary_action') and self.user_role != "td":
+                self.btn_primary_action.setText(self.tr("Install Workspace ↓"))
+                self.btn_primary_action.setStyleSheet("background-color: #10B981; color: #0F172A; font-weight: bold; border-radius: 6px; border: none;")
+                try: self.btn_primary_action.clicked.disconnect()
                 except RuntimeError: pass
                 
-                # Asumimos que la carpeta raíz será el nombre en minúsculas con guiones
                 target_path = self.config_factory.get_workspace_root() / p_name.lower().replace(" ", "-")
-                self.btn_action.clicked.connect(lambda _, p=target_path, b=self.btn_action: self._instalar_entorno(p, b))
+                self.btn_primary_action.clicked.connect(lambda _, p=target_path, b=self.btn_primary_action: self._instalar_entorno(p, b))
+    
 
     def _instalar_entorno(self, project_path: Path, boton: QPushButton):
         boton.setEnabled(False)

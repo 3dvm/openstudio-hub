@@ -22,7 +22,8 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QGridLayout, QLabel, 
-                               QScrollArea, QStackedWidget, QFrame, QPushButton)
+                               QScrollArea, QStackedWidget, QFrame, QPushButton,
+                               QHBoxLayout, QComboBox) # <-- Añadidos QHBoxLayout y QComboBox
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QResizeEvent
 
@@ -159,6 +160,7 @@ class ViewArtist(BaseDashboardView):
         self.vault = vault_manager
         
         self._task_widgets = []
+        self._all_fetched_tasks = []
         self._current_cols = 0
         self._install_worker = None
 
@@ -178,9 +180,27 @@ class ViewArtist(BaseDashboardView):
         layout_tareas.setContentsMargins(0, 0, 0, 0)
         layout_tareas.setSpacing(20)
 
+        # =======================================================
+        # NUEVO: Header con Título y Selector de Proyecto
+        # =======================================================
+        header_layout = QHBoxLayout()
+        
         lbl_title = QLabel(self.tr("My Assigned Tasks"))
         lbl_title.setObjectName("PageTitle")
-        layout_tareas.addWidget(lbl_title)
+        
+        self.combo_projects = QComboBox()
+        self.combo_projects.setObjectName("StandardComboBox")
+        self.combo_projects.setFixedSize(250, 35)
+        # Conectamos el cambio del combo a la función de filtrado
+        self.combo_projects.currentIndexChanged.connect(self._aplicar_filtro_proyecto)
+
+        header_layout.addWidget(lbl_title)
+        header_layout.addStretch()
+        header_layout.addWidget(QLabel(self.tr("Project:")))
+        header_layout.addWidget(self.combo_projects)
+
+        layout_tareas.addLayout(header_layout)
+        # =======================================================
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -239,6 +259,9 @@ class ViewArtist(BaseDashboardView):
     def cargar_tareas(self):
         self.actualizar_status(self.tr("Fetching your assigned tasks from Kitsu..."), "yellow")
         
+        self.combo_projects.clear()
+        self._all_fetched_tasks = []
+        
         for widget in self._task_widgets:
             widget.hide()
             widget.deleteLater()
@@ -250,22 +273,70 @@ class ViewArtist(BaseDashboardView):
                 child.widget().deleteLater()
                 
         self.worker = FetchArtistTasksWorker(self.auth)
-        self.worker.data_ready.connect(self._renderizar_tareas)
+        self.worker.data_ready.connect(self._procesar_nuevas_tareas)
         self.worker.error_occurred.connect(lambda e: self.actualizar_status(f"Network error: {e}", "red"))
         self.worker.finished.connect(self.worker.deleteLater)
         self.worker.start()
 
-    def _renderizar_tareas(self, tasks: list):
+    def _procesar_nuevas_tareas(self, tasks: list):
+        """Recibe las tareas de la API, extrae los proyectos y prepara la UI."""
         if not tasks:
             self.actualizar_status(self.tr("You have no pending tasks. Enjoy your coffee! ☕"), "white")
             return
             
         self.actualizar_status(self.tr("🟢 Synchronized: {0} active tasks found.").format(len(tasks)), "green")
         
+        # 1. Guardar en memoria local
+        self._all_fetched_tasks = tasks
+        
+        # 2. Extraer dinámicamente los proyectos que existen dentro de esas tareas
+        self.combo_projects.blockSignals(True)
+        self.combo_projects.clear()
+        self.combo_projects.addItem(self.tr("All Projects"), "ALL")
+        
+        proyectos_unicos = {}
+        for t in tasks:
+            p_name = t.get('project_name') or (t.get('project') or {}).get('name', 'Unknown')
+            p_id = t.get('project_id')
+            if p_name and p_id and p_id not in proyectos_unicos:
+                proyectos_unicos[p_id] = p_name
+                
+        # Insertar ordenados alfabéticamente
+        for p_id, p_name in sorted(proyectos_unicos.items(), key=lambda item: item[1]):
+            self.combo_projects.addItem(p_name, p_id)
+            
+        self.combo_projects.blockSignals(False)
+        
+        # 3. Disparar el primer renderizado (por defecto mostrará "All Projects")
+        self._aplicar_filtro_proyecto()
+
+    def _aplicar_filtro_proyecto(self, index=0):
+        """Filtra la lista de tareas en caché y dibuja el Grid."""
+        
+        # 1. Limpiar Grid Actual
+        for widget in self._task_widgets:
+            widget.hide()
+            widget.deleteLater()
+        self._task_widgets.clear()
+        
+        while self.grid_layout.count():
+            child = self.grid_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        # 2. Obtener el ID del proyecto a filtrar
+        selected_project_id = self.combo_projects.currentData()
+        
+        if selected_project_id == "ALL":
+            filtered_tasks = self._all_fetched_tasks
+        else:
+            filtered_tasks = [t for t in self._all_fetched_tasks if t.get('project_id') == selected_project_id]
+
         vfs_pipeline = self.config_factory.get_vfs_pipeline_name()
         nas_root = self.config_factory.get_workspace_root()
         
-        for task_data in tasks:
+        # 3. Renderizar Tarjetas
+        for task_data in filtered_tasks:
             if TaskCard:
                 # 1. Extracción directa respaldada por nuestro dump forense
                 p_name = task_data.get('project_name') or (task_data.get('project') or {}).get('name', 'Unknown')

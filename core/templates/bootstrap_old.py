@@ -7,7 +7,7 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.6.1 (Kitsu Wake Parity with Headless)
+# Versión del archivo: 0.5.9
 # =========================================================================================
 
 """
@@ -19,7 +19,6 @@ abre el archivo de la tarea (si existe), e invoca la autodetección nativa del c
 import bpy
 import os
 import importlib
-import addon_utils
 from pathlib import Path
 
 # =================================================================
@@ -30,12 +29,6 @@ def _get_kitsu_addon_key() -> str:
     for key in bpy.context.preferences.addons.keys():
         if "blender_kitsu" in key:
             return key
-    
-    # Búsqueda profunda si no está en las preferencias activas
-    for mod in addon_utils.modules():
-        if "blender_kitsu" in mod.__name__:
-            return mod.__name__
-            
     return "blender_kitsu" # Fallback legacy
 
 def _get_kitsu_module():
@@ -78,6 +71,7 @@ def _apply_persistent_overrides(dummy=None):
                 
                 kitsu_prefs_mod.KITSU_addon_preferences.project_root_path = custom_project_root_path
 
+
         except Exception as e:
             print(f"[OPENSTUDIO HUB] Error en Monkey Patch: {e}")
 
@@ -102,11 +96,13 @@ def _startup_sequence():
     y establece la sesión. Retorna None para que el timer se autodestruya.
     """
     try:
+
         print("\n" + "="*50)
         print("[OPENSTUDIO HUB] Iniciando Secuencia de Arranque...")
 
         target_file = os.environ.get("OPENSTUDIO_TARGET_FILE", "")
         task_type = os.environ.get("OPENSTUDIO_TASK_TYPE", "generic").lower()
+        entity_type = os.environ.get("OPENSTUDIO_KITSU_ENTITY_TYPE", "").upper()
         
         kitsu_user = os.environ.get("OPENSTUDIO_KITSU_USER", "")
         kitsu_pwd = os.environ.get("OPENSTUDIO_KITSU_PWD", "")
@@ -116,21 +112,6 @@ def _startup_sequence():
         prod_folder = os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "02_archivos_de_produccion")
 
         addon_key = _get_kitsu_addon_key()
-
-        # =========================================================
-        # NUEVO: FORZAR ACTIVACIÓN (Paridad exacta con Headless Builder)
-        # =========================================================
-        if addon_key not in bpy.context.preferences.addons:
-            print(f"[OPENSTUDIO HUB] Despertando extensión: {addon_key}...")
-            try:
-                # Evitamos addon_utils.enable porque dispara un unregister() buggeado en Kitsu
-                bpy.ops.preferences.addon_enable(module=addon_key)
-            except Exception as e:
-                print(f"[OPENSTUDIO HUB] Advertencia al activar Kitsu: {e}")
-            
-            # Forzamos la importación en memoria para el registro de RNA
-            importlib.import_module(addon_key)
-        # =========================================================
         
         # 1. Configurar Preferencias Físicas y Credenciales
         if addon_key in bpy.context.preferences.addons:
@@ -158,7 +139,6 @@ def _startup_sequence():
                 addon_prefs.email = kitsu_user
                 addon_prefs.passwd = kitsu_pwd
                 try:
-                    print(f"[OPENSTUDIO HUB] Autenticando Kitsu con {kitsu_user}...")
                     bpy.ops.kitsu.session_start('EXEC_DEFAULT')
                     bpy.ops.kitsu.con_productions_load('EXEC_DEFAULT')
                     if project_id:
@@ -167,9 +147,7 @@ def _startup_sequence():
                             kitsu_mod.cache.project_active_set_by_id(bpy.context, project_id)
                         addon_prefs.project_active_id = project_id 
                 except Exception as e:
-                    print(f"[OPENSTUDIO HUB] Error al autenticar Kitsu API: {e}")
-        else:
-            print(f"[OPENSTUDIO HUB] ❌ ERROR: El addon {addon_key} no pudo inicializarse en las preferencias.")
+                    print(f"[OPENSTUDIO HUB] Error al autenticar: {e}")
 
         # 2. Carga del Archivo Maestro
         if target_file and os.path.exists(target_file):

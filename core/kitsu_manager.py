@@ -250,3 +250,43 @@ class KitsuManager:
         except Exception as e:
             return False, f"Error crítico: {str(e)}", {}
 
+    def check_edit_preview_exists(self, project_id: str) -> bool:
+        """
+        Verifica si existe al menos un archivo de previsualización (preview-file) 
+        para la tarea de Edición en Kitsu. Retorna True si hay video, False si no.
+        """
+        try:
+            edits = gazu.client.get(f"data/edits/with-tasks?project_id={project_id}")
+            if not edits:
+                return False
+                
+            for e in edits:
+                if e.get('canceled'):
+                    continue
+                
+                # Buscar el Task Type de 'Edit'
+                r_task_types = gazu.client.get(f"data/edits/{e['id']}/task-types")
+                edit_task_id = None
+                for tt in r_task_types:
+                    if tt['name'] == 'Edit':
+                        edit_task_id = tt['id']
+                        break
+                
+                if not edit_task_id:
+                    continue
+                
+                # Buscar previews
+                r_previews = gazu.client.get(f"data/edits/{e['id']}/preview-files")
+                if not r_previews:
+                    continue
+                    
+                preview_list = r_previews.get(edit_task_id, [])
+                if preview_list and len(preview_list) > 0 and preview_list[0] is not None:
+                    return True
+                    
+            return False
+            
+        except Exception as e:
+            print(f"[KitsuManager] Error verificando la existencia de previews de edición: {e}")
+            return False
+

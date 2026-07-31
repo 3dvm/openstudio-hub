@@ -21,16 +21,21 @@ from _version import __version__
 
 import sys
 from pathlib import Path
+import urllib.parse
 
 # --- PySide6 (Motor Gráfico) ---
-from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QStackedWidget
+from ui.web_context_view import WebContextView
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QCloseEvent, QDesktopServices
 
 # --- CORE (Motores) ---
-from core import vault_manager
+#from core import vault_manager
 from core.auth_manager import AuthManager
 from core.vault_manager import VaultManager
 from core.config_factory import ConfigFactory
+from core.watchtower_launcher import WatchtowerLauncher
+from core.kitsu_manager import KitsuManager
 
 # --- UI (Vistas) ---
 from ui.view_login import ViewLogin
@@ -156,8 +161,97 @@ class OpenStudioHub(QMainWindow):
                 config_factory=self.config_factory,
                 on_logout=self.ejecutar_logout
             )
+
+        # 2. NUEVO: Implementamos el Sistema de Capas (Stack)
+        self.view_stack = QStackedWidget()
         
-        self.setCentralWidget(self.vista_actual)
+        # Capa 0: El Dashboard 
+        self.view_stack.addWidget(self.vista_actual)
+        
+        # Capa 1: El Contexto Web (Kitsu/Watchtower)
+        self.web_context = WebContextView(self)
+        self.web_context.back_requested.connect(self.cerrar_kitsu)
+        self.view_stack.addWidget(self.web_context)
+        
+        self.setCentralWidget(self.view_stack)
+
+    def abrir_kitsu(self, target_url: str = None):
+        """Extrae la URL de Kitsu, limpia el sufijo /api y cambia la capa visual."""
+        # Obtenemos la URL (ej: "http://localhost:8080" o "http://localhost:8080/api")
+        kitsu_url = self.config_factory.get_kitsu_api_url()
+        
+        # Limpiamos /api porque queremos cargar la Interfaz Gráfica, no el endpoint crudo
+        if kitsu_url.endswith("/api"):
+            kitsu_url = kitsu_url[:-4]
+        
+        if not target_url:
+            target_url = f"{kitsu_url}/news-feed"
+
+        if False: # hay que solucionar el SSO primero
+            # Parseamos el host para inyectarlo en la lista blanca de seguridad (Whitelisting de enlaces)
+            parsed_url = urllib.parse.urlparse(kitsu_url)
+            allowed_hosts = [parsed_url.hostname, "localhost", "127.0.0.1"]
+
+            token = self.auth.get_current_token()
+            
+            # Cargamos el navegador y cambiamos la vista
+            self.web_context.load_context(target_url, "Kitsu", allowed_hosts, sso_token=token)
+            self.view_stack.setCurrentWidget(self.web_context)
+            
+        else:
+            QDesktopServices.openUrl(QUrl(target_url))
+
+    def cerrar_kitsu(self):
+        """Regresa al Dashboard nativo (Capa 0) y gatilla un refresco de datos."""
+        self.view_stack.setCurrentWidget(self.vista_actual)
+        
+        # Aquí más adelante podemos hacer que dispare una señal para que 
+        # el ActivityCard o el PM Dashboard recarguen los datos recientes.
+        print("[OpenStudio Hub] Regreso de Kitsu completado.")
+
+    def abrir_watchtower(self, project_root_path: Path, project_id: str = ""):
+        """Inicializa el servidor local de Watchtower y enruta la vista."""
+
+        # --- VERIFICACIÓN DE VIDEO DE EDICIÓN ---
+        if project_id:
+            kitsu_mgr = KitsuManager()
+            if not kitsu_mgr.check_edit_preview_exists(project_id):
+                QMessageBox.warning(
+                    self, 
+                    "Edición No Renderizada", 
+                    "No hay un video renderizado para el Edit en Kitsu.\n\n"
+                    "Watchtower requiere el archivo de edición principal para funcionar.\n"
+                    "Por favor, renderiza y haz Push del Master Edit desde Blender antes de abrir Watchtower."
+                )
+                return
+        # ----------------------------------------
+
+        # Extraemos las credenciales guardadas en la bóveda
+        kitsu_url = self.config_factory.get_kitsu_api_url()
+        kitsu_user = getattr(self.vault, '_transient_email', "")
+        kitsu_pwd = getattr(self.vault, '_transient_password', "")
+
+        #breakpoint()
+
+        # Instanciamos el launcher
+        self.wt_launcher = WatchtowerLauncher(
+            project_root_path,
+            kitsu_url,
+            kitsu_user,
+            kitsu_pwd,
+            lambda msg, color: print(f"[Watchtower] {msg}"),
+            self.config_factory
+        )
+        
+        # Conectamos la señal que emite la URL
+        self.wt_launcher.server_ready.connect(self._on_watchtower_ready)
+        self.wt_launcher.launch()
+
+    def _on_watchtower_ready(self, url: str):
+        """Recibe la URL del servidor local y cambia la capa visual."""
+        # Como no enviamos el parámetro sso_token, la vista actuará como un navegador normal
+        self.web_context.load_context(url, "Watchtower", ["localhost", "127.0.0.1"])
+        self.view_stack.setCurrentWidget(self.web_context)
 
     def ejecutar_logout(self):
         """Limpia el estado global de Qt y revierte al formulario de acceso."""

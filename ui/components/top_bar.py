@@ -7,7 +7,7 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 1.1.0
+# Versión del archivo: 1.2.0
 # =========================================================================================
 
 """
@@ -38,6 +38,21 @@ class TopBar(QFrame):
 
         # Resorte expansivo para empujar todas las herramientas hacia la extrema derecha
         layout.addStretch()
+
+        # --- NUEVO: Botón de Kitsu ---
+        self.btn_kitsu = QPushButton("🦊 Kitsu")
+        self.btn_kitsu.setFixedSize(85, 32)
+        self.btn_kitsu.setCursor(Qt.PointingHandCursor)
+        self.btn_kitsu.setStyleSheet("""
+            QPushButton {
+                background-color: #F97316; color: white; border: none; 
+                font-weight: bold; border-radius: 6px;
+            }
+            QPushButton:hover { background-color: #EA580C; }
+        """)
+        self.btn_kitsu.clicked.connect(self._on_kitsu_clicked)
+        layout.addWidget(self.btn_kitsu)
+        # -----------------------------
 
         # Info de Usuario
         rol = self.auth.get_user_role().capitalize() if self.auth else "Offline"
@@ -77,3 +92,9 @@ class TopBar(QFrame):
         if self.on_logout:
             self.btn_logout.clicked.connect(self.on_logout)
         layout.addWidget(self.btn_logout)
+
+    def _on_kitsu_clicked(self):
+        """Busca el orquestador principal y dispara el cambio de vista."""
+        main_win = self.window()
+        if hasattr(main_win, 'abrir_kitsu'):
+            main_win.abrir_kitsu()

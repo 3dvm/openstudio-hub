@@ -23,18 +23,25 @@ import time
 import socket
 import threading
 import subprocess
-import webbrowser
+#import webbrowser
 import http.server
 import socketserver
 from pathlib import Path
 
-class WatchtowerLauncher:
-    def __init__(self, project_root: Path, kitsu_host: str, kitsu_user: str, kitsu_pwd: str, status_callback):
+from PySide6.QtCore import QObject, Signal
+
+class WatchtowerLauncher(QObject):
+
+    server_ready = Signal(str)
+
+    def __init__(self, project_root: Path, kitsu_host: str, kitsu_user: str, kitsu_pwd: str, status_callback, config_factory):
+        super().__init__()
         self.project_root = project_root
         self.kitsu_host = kitsu_host
         self.kitsu_user = kitsu_user
         self.kitsu_pwd = kitsu_pwd
         self.status_callback = status_callback
+        self.config_factory = config_factory
         
         self.server_thread = None
         self.httpd = None
@@ -51,26 +58,39 @@ class WatchtowerLauncher:
 
     def _run_pipeline_and_serve(self):
         # 1. Preparar directorio de trabajo aislado
-        wt_dir = self.project_root / "06_conf_LOCAL" / "watchtower_build"
+        vfs_local = self.config_factory.get_vfs_local_name()
+        wt_dir = self.project_root / vfs_local / "watchtower_build"
         wt_dir.mkdir(parents=True, exist_ok=True)
 
         self.status_callback("Watchtower: Extrayendo datos desde la API de Kitsu...", "yellow")
 
         # 2. Inyectar Credenciales JIT (Zero-Disk) en el subproceso
-        env = os.environ.copy()
-        env["KITSU_DATA_SOURCE_URL"] = f"{self.kitsu_host}/api"
-        env["KITSU_DATA_SOURCE_USER_EMAIL"] = self.kitsu_user
-        env["KITSU_DATA_SOURCE_USER_PASSWORD"] = self.kitsu_pwd
+        env_file_path = wt_dir / ".env.local"
+        env_content=(
+                f"KITSU_DATA_SOURCE_URL={self.kitsu_host}/api\n"
+                f"KITSU_DATA_SOURCE_USER_EMAIL={self.kitsu_user}\n"
+                f"KITSU_DATA_SOURCE_USER_PASSWORD={self.kitsu_pwd}\n"
+        )
 
+        #breakpoint()
         # 3. Ejecutar el compilador (watchtower_pipeline.kitsu -b)
         try:
+            with open(env_file_path, "w", encoding="utf-8") as f:
+                f.write(env_content)
             cmd = [sys.executable, "-m", "watchtower_pipeline.kitsu", "-b"]
             # Redirigimos el CWD al directorio temporal
-            result = subprocess.run(cmd, cwd=str(wt_dir), env=env, capture_output=True, text=True)
+            result = subprocess.run(cmd, cwd=str(wt_dir), capture_output=True, text=True)
+
+            if env_file_path.exists():
+                env_file_path.unlink()
 
             if result.returncode != 0:
                 self.status_callback("Watchtower: Error al procesar datos de Kitsu.", "red")
-                print(f"[WATCHTOWER ERROR]\n{result.stderr}")
+                #print(f"[WATCHTOWER ERROR]\n{result.stderr}")
+                print("[WATCHTOWER ERROR DETALLADO]")
+                print(f"--- STDOUT ---\n{result.stdout}")
+                print(f"--- STDERR ---\n{result.stderr}")
+                print("----------------------------")
                 return
 
             self.status_callback("Watchtower: Datos procesados. Iniciando servidor local...", "yellow")
@@ -89,6 +109,7 @@ class WatchtowerLauncher:
         """Levanta un SimpleHTTPRequestHandler y abre el navegador del OS."""
         if self.httpd:
             self.status_callback("Watchtower ya se encuentra en ejecución.", "green")
+            self.server_ready.emit(f"http://localhost:{self.httpd.server_address[1]}")
             return 
 
         port = self._get_free_port()
@@ -96,7 +117,12 @@ class WatchtowerLauncher:
         # Redirigir la ruta al directorio estático
         os.chdir(str(serve_dir))
         
-        Handler = http.server.SimpleHTTPRequestHandler
+        #Handler = http.server.SimpleHTTPRequestHandler
+        try:
+            from RangeHTTPServer import RangeRequestHandler as Handler
+        except ImportError:
+            self.status_callback("Watchtower: RangeHTTPServer no instalado. El video fallará.", "red")
+            Handler = http.server.SimpleHTTPRequestHandler
 
         class DualStackServer(socketserver.ThreadingTCPServer):
             allow_reuse_address = True
@@ -112,7 +138,8 @@ class WatchtowerLauncher:
             
             # Damos un pequeño respiro al socket antes de abrir el navegador
             time.sleep(1.0)
-            webbrowser.open(f"http://localhost:{port}")
+            #webbrowser.open(f"http://localhost:{port}")
+            self.server_ready.emit(f"http://localhost:{port}")
 
         except OSError as e:
             self.status_callback(f"Watchtower: Fallo al enlazar el servidor local: {e}", "red")
