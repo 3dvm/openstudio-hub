@@ -146,9 +146,10 @@ class ProjectCard(QFrame):
         self.user_role = self.auth.get_user_role() if hasattr(self.auth, 'get_user_role') else "user"
         
         self.setObjectName("FloatingCard")
+        #self.setFixedWidth(320)
         # Tarjeta más alta para acomodar el botón en roles No-Admin
-        card_height = 280 if self.user_role == "td" else 330
-        self.setFixedSize(320, card_height)
+        #card_height = 280 if self.user_role == "td" else 330
+        self.setFixedSize(320, 330)
         
         self.setStyleSheet("""
             QFrame#FloatingCard { background-color: #1E293B; border-radius: 12px; border: 1px solid #334155; }
@@ -287,10 +288,28 @@ class ProjectCard(QFrame):
         self.btn_kitsu_dropdown.setMenu(kitsu_menu)
 
         # B) Construir el Ghost Button de Watchtower
-        self.btn_watchtower = QPushButton("🗼")
+        self.btn_watchtower = QPushButton("")
+        self.btn_watchtower.setText("")
         self.btn_watchtower.setFixedSize(35, 35)
         self.btn_watchtower.setCursor(Qt.PointingHandCursor)
         self.btn_watchtower.setToolTip(self.tr("Open Watchtower Dashboard"))
+        # Cargar SVG si existe, fallback a emoji
+        wt_icon_path = Path("assets/icons/radar.svg")
+        if wt_icon_path.exists() and wt_icon_path.is_file():
+            # Pintamos el SVG de un gris acorde a los bordes
+            try:
+                with open(wt_icon_path, 'r', encoding='utf-8') as f:
+                    svg_content = f.read()
+                svg_content = svg_content.replace('currentColor', '#94A3B8')
+                svg_content = svg_content.replace('stroke-width="2"', 'stroke-width="2.5"')
+                pixmap = QPixmap()
+                pixmap.loadFromData(svg_content.encode('utf-8'), "SVG")
+                self.btn_watchtower.setIcon(QIcon(pixmap))
+                self.btn_watchtower.setIconSize(QSize(20, 20))
+            except Exception:
+                self.btn_watchtower.setText("")
+        else:
+            self.btn_watchtower.setText("")
         self.btn_watchtower.clicked.connect(self._on_watchtower_clicked)
 
         # C) Construir el CTA Primario del Hub (Wizard / Launch)
@@ -321,6 +340,22 @@ class ProjectCard(QFrame):
         else:
             # PM & Artist Layout: Primary Action (Orange/Blue) + Kitsu Ghost + Watchtower Ghost
             self.btn_kitsu_dropdown.setText("🦊 ▼")
+            # Cargar SVG para la claqueta de Kitsu (clapperboard.svg)
+            kitsu_icon_path = Path("assets/icons/kitsu.svg")
+            if kitsu_icon_path.exists() and kitsu_icon_path.is_file():
+                try:
+                    with open(kitsu_icon_path, 'r', encoding='utf-8') as f:
+                        svg_content = f.read()
+                    svg_content = svg_content.replace('currentColor', '#F97316')
+                    svg_content = svg_content.replace('stroke-width="2"', 'stroke-width="2.5"')
+                    pixmap = QPixmap()
+                    pixmap.loadFromData(svg_content.encode('utf-8'), "SVG")
+                    self.btn_kitsu_dropdown.setIcon(QIcon(pixmap))
+                    self.btn_kitsu_dropdown.setIconSize(QSize(18, 18))
+                except Exception:
+                    self.btn_kitsu_dropdown.setText("🎬 ▼")
+            else:
+                self.btn_kitsu_dropdown.setText("🎬 ▼")
             self.btn_kitsu_dropdown.setStyleSheet("""
                 QToolButton { background: transparent; color: #F97316; border: 1px solid #334155; border-radius: 6px; padding: 0 10px; font-weight: bold;}
                 QToolButton:hover { background-color: rgba(249, 115, 22, 0.1); border-color: #F97316; }

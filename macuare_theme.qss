@@ -271,3 +271,37 @@ QFrame#StepLineCompleted {
 QFrame#StepLinePending {
     border-top: 4px solid #334155;
 }
+
+/* ======================================================= */
+/* TOP TABS (VSCode / Modern Browser Style)                */
+/* ======================================================= */
+
+QPushButton#TopTabInactive, QPushButton#TopTabActive {
+    border: none;
+    border-radius: 0px;
+    padding: 0 20px;
+    font-size: 13px;
+    outline: none;
+    margin-top: 1px; /* Evita que el borde superior choque */
+}
+
+QPushButton#TopTabInactive {
+    background-color: transparent;
+    color: #64748B;
+    border-top: 2px solid transparent;
+}
+
+QPushButton#TopTabInactive:hover {
+    background-color: #2E3643;
+    color: #E2E8F0;
+    border-top: 2px solid #475569;
+}
+
+QPushButton#TopTabActive {
+    background-color: #2E3643; /* Mismo color que el fondo del área de trabajo */
+    color: #F8FAFC;
+    font-weight: bold;
+    border-top: 2px solid #F97316; /* Accent color superior */
+    border-left: 1px solid #141820;
+    border-right: 1px solid #141820;
+}

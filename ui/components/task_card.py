@@ -109,8 +109,9 @@ class TaskCard(QFrame):
             self.config_path = None
         
         self.setObjectName("FloatingCard")
-        self.setMinimumHeight(280)
-        self.setMinimumWidth(380)
+        #self.setMinimumHeight(280)
+        #self.setMinimumWidth(380)
+        self.setFixedSize(320, 280)
 
         self._build_ui()
         self._cargar_miniatura()

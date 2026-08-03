@@ -67,14 +67,16 @@ class Sidebar(QFrame):
 
     def add_button(self, btn_id: str, texto: str, emoji: str, icon_name: str, callback, activo: bool = False):
         btn = QPushButton()
-        icon_path = Path(f"assets/icons/{icon_name}")
         color_hex = "#F97316" if activo else "#94A3B8"
         
-        if icon_path.exists():
+        # Validación robusta para evitar que intente leer un directorio si icon_name está vacío
+        icon_path = Path(f"assets/icons/{icon_name}")
+        if icon_name and icon_path.exists() and icon_path.is_file():
             btn.setIcon(self._crear_icono_coloreado(icon_path, color_hex))
             btn.setIconSize(QSize(22, 22))
             btn.setText(f"   {texto}")
         else:
+            # Fallback seguro al Emoji si el SVG no existe
             btn.setText(f"{emoji}   {texto}")
             
         btn.setCursor(Qt.PointingHandCursor)

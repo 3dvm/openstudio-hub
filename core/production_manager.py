@@ -189,7 +189,7 @@ class ProductionManager:
         # 2. Fallback de seguridad (solo lo crea en memoria global si alguien lo borró)
         if not storyboard_tt:
             storyboard_tt = gazu.task.new_task_type(
-                name="Storyboard", 
+                name="StoryboardSeq", 
                 color="#F97316",
                 for_entity="Sequence"
             )

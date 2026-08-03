@@ -61,8 +61,9 @@ def inyectar_splash_corporativo(dummy=None):
         
     try:
         bpy.context.preferences.view.splash_image = img_name
-    except Exception:
-        
+    except Exception as e:
+        print(f"Error al insertar el splash screen: {e}")
+        return False
 
 def register():
     # Este módulo expone funciones puras, no requiere registrar clases en bpy

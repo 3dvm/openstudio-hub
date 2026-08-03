@@ -45,7 +45,7 @@ class ViewTD(BaseDashboardView):
 
         # 1. Configurar Navegación Lateral (Inyectada al Master Layout)
         self.add_sidebar_button("proyectos", self.tr("Projects"), "🗂️", "folder.svg", lambda: self._cambiar_panel("proyectos"), activo=True)
-        self.add_sidebar_button("watchtower", self.tr("Watchtower"), "🗼", "radar.svg", lambda: self._cambiar_panel("watchtower"))
+        #self.add_sidebar_button("watchtower", self.tr("Watchtower"), "🗼", "radar.svg", lambda: self._cambiar_panel("watchtower"))
         self.add_sidebar_button("infra", self.tr("Infrastructure"), "⚙️", "server.svg", lambda: self._cambiar_panel("infra"))
         self.add_sidebar_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._cambiar_panel("settings"))
 
@@ -72,10 +72,10 @@ class ViewTD(BaseDashboardView):
         self.stacked_content.addWidget(self.vista_proyectos)
 
         # Index 1: Watchtower Hub Window (Placeholder)
-        placeholder_wt = QLabel(self.tr("🚧 Watchtower module under construction..."))
-        placeholder_wt.setAlignment(Qt.AlignCenter)
-        placeholder_wt.setObjectName("PlaceholderText")
-        self.stacked_content.addWidget(placeholder_wt)
+        # placeholder_wt = QLabel(self.tr("🚧 Watchtower module under construction..."))
+        # placeholder_wt.setAlignment(Qt.AlignCenter)
+        # placeholder_wt.setObjectName("PlaceholderText")
+        # self.stacked_content.addWidget(placeholder_wt)
         
         # Index 2: Infrastructure Configuration Panel
         self.vista_infra = InfrastructureWidget(
@@ -101,5 +101,5 @@ class ViewTD(BaseDashboardView):
         """Visual Router: Actualiza el sidebar y cambia la vista del stack."""
         self.set_active_sidebar_button(panel_id) # Método heredado
         
-        indices = {"proyectos": 0, "watchtower": 1, "infra": 2, "settings": 3}
+        indices = {"proyectos": 0, "infra": 1, "settings": 2}
         self.stacked_content.setCurrentIndex(indices.get(panel_id, 0))

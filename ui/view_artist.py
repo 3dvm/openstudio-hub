@@ -167,7 +167,7 @@ class ViewArtist(BaseDashboardView):
         self.setObjectName("ViewArtistBase")
 
         self.add_sidebar_button("mis_tareas", self.tr("My Tasks"), "📋", "list.svg", lambda: self._cambiar_panel("mis_tareas"), activo=True)
-        self.add_sidebar_button("watchtower", self.tr("Watchtower"), "🗼", "radar.svg", lambda: self._cambiar_panel("watchtower"))
+        #self.add_sidebar_button("watchtower", self.tr("Watchtower"), "🗼", "radar.svg", lambda: self._cambiar_panel("watchtower"))
 
         self._build_artist_content()
         self.cargar_tareas()
@@ -217,10 +217,10 @@ class ViewArtist(BaseDashboardView):
 
         self.stacked_content.addWidget(self.panel_tareas)
 
-        placeholder_wt = QLabel(self.tr("🚧 Watchtower module under construction..."))
-        placeholder_wt.setAlignment(Qt.AlignCenter)
-        placeholder_wt.setObjectName("PlaceholderText")
-        self.stacked_content.addWidget(placeholder_wt)
+        # placeholder_wt = QLabel(self.tr("🚧 Watchtower module under construction..."))
+        # placeholder_wt.setAlignment(Qt.AlignCenter)
+        # placeholder_wt.setObjectName("PlaceholderText")
+        # self.stacked_content.addWidget(placeholder_wt)
 
         self.content_layout.addWidget(self.stacked_content, stretch=1)
 
