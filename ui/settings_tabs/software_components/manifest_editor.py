@@ -57,17 +57,19 @@ class ManifestEditorWidget(QFrame):
 
         control_layout.addStretch()
 
-        self.btn_fetch_studio_tools = QPushButton(self.tr("🚀 Auto-Fetch Blender Studio Tools"))
-        self.btn_fetch_studio_tools.setStyleSheet("background-color: #06B6D4; color: white; font-weight: bold; border-radius: 6px; border: none; padding: 0 15px;")
-        self.btn_fetch_studio_tools.setFixedHeight(35)
-        self.btn_fetch_studio_tools.clicked.connect(self._disparar_fetch_studio_tools)
-        control_layout.addWidget(self.btn_fetch_studio_tools)
+        # self.btn_fetch_studio_tools = QPushButton(self.tr("Auto-Fetch Blender Studio Tools"))
+        # self.btn_fetch_studio_tools.setStyleSheet("background-color: #06B6D4; color: white; font-weight: bold; border-radius: 6px; border: none; padding: 0 15px;")
+        # self.btn_fetch_studio_tools.setObjectName("SecondaryButton")
+        # self.btn_fetch_studio_tools.setFixedHeight(30)
+        # self.btn_fetch_studio_tools.clicked.connect(self._disparar_fetch_studio_tools)
+        # control_layout.addWidget(self.btn_fetch_studio_tools)
 
-        self.btn_pack_toolkit = QPushButton(self.tr("🛠️ Pack OpenStudio Toolkit"))
-        self.btn_pack_toolkit.setStyleSheet("background-color: #F59E0B; color: #0F172A; font-weight: bold; border-radius: 6px; border: none; padding: 0 15px;")
-        self.btn_pack_toolkit.setFixedHeight(35)
-        self.btn_pack_toolkit.clicked.connect(self._empaquetar_toolkit_local)
-        control_layout.addWidget(self.btn_pack_toolkit)
+        self.btn_addons_fetch_pack = QPushButton(self.tr("Fetch and Pack Pipeline addons"))
+        # self.btn_pack_toolkit.setStyleSheet("background-color: #F59E0B; color: #0F172A; font-weight: bold; border-radius: 6px; border: none; padding: 0 15px;")
+        self.btn_addons_fetch_pack.setObjectName("SecondaryButton")
+        self.btn_addons_fetch_pack.setFixedHeight(30)
+        self.btn_addons_fetch_pack.clicked.connect(self._fetch_pack_pipe_addons)
+        control_layout.addWidget(self.btn_addons_fetch_pack)
 
         manifest_layout.addLayout(control_layout)
 
@@ -137,7 +139,7 @@ class ManifestEditorWidget(QFrame):
         for cat_name, items in bloque_categorias.items():
             cat_item = QTreeWidgetItem(self.tree_manifest)
             cat_item.setText(0, f"{cat_name.upper()}")
-            cat_item.setForeground(0, Qt.green)
+            cat_item.setForeground(0, Qt.lightGray)
             cat_item.setExpanded(True)
             
             for item_name, data in items.items():
@@ -165,6 +167,11 @@ class ManifestEditorWidget(QFrame):
                 self.manifest_data[version_activa][cat_name][item_name]["mandatory"] = is_checked
                 self._on_field_modified()
 
+    def _fetch_pack_pipe_addons(self):
+        self.btn_addons_fetch_pack.setEnabled(False)
+        self._disparar_fetch_studio_tools()
+        self._empaquetar_toolkit_local()
+
     # ---------------------------------------------------------
     # OPERACIONES: FETCH, PACK & INJECT
     # ---------------------------------------------------------
@@ -173,7 +180,7 @@ class ManifestEditorWidget(QFrame):
         if not version: return
 
         vault_root = self.vault_manager.config_factory.get_vault_path()
-        self.btn_fetch_studio_tools.setEnabled(False)
+        # self.btn_fetch_studio_tools.setEnabled(False)
         self.progress_bar.setValue(0)
         self.progress_bar.show()
 
@@ -186,7 +193,7 @@ class ManifestEditorWidget(QFrame):
         self._fetch_worker.start()
 
     def _on_studio_tools_finished(self, herramientas_nuevas: dict):
-        self.btn_fetch_studio_tools.setEnabled(True)
+        self.btn_addons_fetch_pack.setEnabled(True)
         self.progress_bar.hide()
         version_activa = self.combo_versions.currentText()
         
@@ -199,7 +206,7 @@ class ManifestEditorWidget(QFrame):
         self._on_field_modified()
 
     def _on_studio_tools_error(self, error: str):
-        self.btn_fetch_studio_tools.setEnabled(True)
+        self.btn_addons_fetch_pack.setEnabled(True)
         self.progress_bar.hide()
         self.status_callback(self.tr("Studio Tools Fetch Failed: {0}").format(error), "red")
 

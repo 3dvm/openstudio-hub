@@ -11,6 +11,7 @@
 # =========================================================================================
 
 import re
+from PySide6.QtGui import QIcon, QPixmap
 import requests
 from pathlib import Path
 
@@ -202,7 +203,7 @@ class RemoteExplorerWidget(QFrame):
             row = QHBoxLayout()
             row.setContentsMargins(10, 5, 10, 5)
             
-            lbl = QLabel(f"📁 Blender {v}")
+            lbl = QLabel(f" Blender {v}")
             lbl.setStyleSheet("color: #F8FAFC; font-weight: bold; font-size: 14px;")
             row.addWidget(lbl)
             
@@ -213,7 +214,11 @@ class RemoteExplorerWidget(QFrame):
             
             row.addStretch()
             
-            btn = QPushButton(self.tr("Open Folder"))
+            # btn = QPushButton(self.tr("Open Folder"))
+            btn = QPushButton()
+            icon = self._crear_icono_coloreado(Path("assets/icons/folder.svg"), "#F97316")
+            btn.setIcon(icon)
+
             btn.setObjectName("SecondaryButton")
             btn.setFixedSize(100, 30)
             btn.setCursor(Qt.PointingHandCursor)
@@ -285,7 +290,7 @@ class RemoteExplorerWidget(QFrame):
         row.setContentsMargins(10, 5, 10, 5)
         
         # Icono / OS Badge
-        os_colors = {"windows": "#3B82F6", "macos": "#A855F7", "linux": "#F59E0B"}
+        os_colors = {"windows": "#564256", "macos": "#5B5F97", "linux": "#F59E0B"}
         color = os_colors.get(os_type, "#64748B")
         
         lbl_os = QLabel(os_type.upper())
@@ -351,3 +356,19 @@ class RemoteExplorerWidget(QFrame):
             self.download_finished.emit(exito, filename)
             # Refrescar la vista actual para que el botón cambie a "✓ In Vault"
             self._aplicar_filtros_os()
+
+    def _crear_icono_coloreado(self, icon_path: Path, color_hex: str) -> QIcon:
+        if not icon_path.exists(): return QIcon()
+        try:
+            with open(icon_path, 'r', encoding='utf-8') as f:
+                svg_content = f.read()
+            svg_content = svg_content.replace('currentColor', color_hex)
+            svg_content = svg_content.replace('#000000', color_hex)
+            svg_content = svg_content.replace('#000"', f'{color_hex}"')
+            svg_content = svg_content.replace("#000'", f"{color_hex}'")
+            pixmap = QPixmap()
+            pixmap.loadFromData(svg_content.encode('utf-8'), "SVG")
+            return QIcon(pixmap)
+        except Exception:
+            return QIcon(str(icon_path))
+
