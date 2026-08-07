@@ -3,8 +3,9 @@ name: Compilar Distribuibles (Win, Mac, Linux)
 # Este flujo se ejecutará cuando hagas push a la rama main o de forma manual
 on:
   push:
-    branches: [ "main", "master" ]
-  workflow_dispatch: 
+    tags:
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -38,6 +39,6 @@ jobs:
     - name: Uploading the executable
       uses: actions/upload-artifact@v4
       with:
-        name: OpenStudio_Hub-${{ runner.os }}
+        name: OpenStudioHub-${{ runner.os }}
         path: dist/*
         retention-days: 7
