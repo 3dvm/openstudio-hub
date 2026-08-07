@@ -1,6 +1,6 @@
 {
     "studio_profile": {
-        "name": "Kitsu"
+        "name": "Macuare Estudio"
     },
     "vcs_engine": {
         "local_workspace_root": {
@@ -10,7 +10,7 @@
         },
         "active_adapter": "svn",
         "enable_vendor_sparse_checkout": true,
-        "repository_url": "svn://localhost"
+        "repository_url": "svn://localhost:3690"
     },
     "kitsu_production": {
         "api_url": "http://localhost:8080"
@@ -22,7 +22,7 @@
         "vfs_local": "local",
         "vfs_pipeline": "pipeline",
         "custom_dirs": [
-            "brief_refs",
+            "briefs_and_refs",
             "renders"
         ]
     },

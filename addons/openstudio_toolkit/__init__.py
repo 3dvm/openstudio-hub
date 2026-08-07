@@ -20,6 +20,7 @@ from . import gatekeeper
 from . import ui_modals
 from . import hooks
 from . import utils_logger
+from . import ui_panel
 
 # Importaremos los módulos a medida que los vayamos construyendo en esta Fase
 # from . import gatekeeper
@@ -29,6 +30,7 @@ modules = [
     ui_modals,
     hooks,
     utils_logger,
+    ui_panel,
 ]
 
 def register():

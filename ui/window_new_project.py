@@ -68,7 +68,7 @@ class ProjectCreationWorker(QThread):
 class NewProjectWindow(QDialog):
     def __init__(self, parent: QWidget, config_factory, on_success_callback):
         super().__init__(parent)
-        self.setWindowTitle("Nuevo Proyecto")
+        self.setWindowTitle(self.tr("New Project"))
         self.setFixedSize(500, 700) # Más compacta sin los campos de Auth
         self.setModal(True)
         self.ruta_splash = ""
@@ -87,7 +87,7 @@ class NewProjectWindow(QDialog):
         main_layout.setContentsMargins(40, 30, 40, 30)
         main_layout.setSpacing(15)
 
-        lbl_titulo = QLabel("Configuración Inicial")
+        lbl_titulo = QLabel(self.tr("Initial Setup"))
         lbl_titulo.setObjectName("CardTitle")
         lbl_titulo.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(lbl_titulo)
@@ -96,19 +96,19 @@ class NewProjectWindow(QDialog):
 
         self.entry_nombre = QLineEdit()
         self.entry_nombre.setObjectName("FormInput")
-        self.entry_nombre.setPlaceholderText("Nombre (ej. p0004-nuevo-proyecto)")
+        self.entry_nombre.setPlaceholderText(self.tr("Name (e.g., p0004-new-project)"))
         self.entry_nombre.setFixedHeight(45)
         main_layout.addWidget(self.entry_nombre)
 
         # Dropdown de Plantilla Kitsu
-        lbl_kitsu_template = QLabel("Plantilla de Kitsu:")
+        lbl_kitsu_template = QLabel(self.tr("Kitsu Template:"))
         lbl_kitsu_template.setStyleSheet("font-weight: bold; margin-top: 10px;")
         main_layout.addWidget(lbl_kitsu_template)
         
         self.combo_kitsu_template = QComboBox()
         self.combo_kitsu_template.setFixedHeight(40)
         self.combo_kitsu_template.setStyleSheet("QComboBox { background-color: #0F172A; border: 1px solid #475569; border-radius: 8px; color: #F8FAFC; padding: 5px; }")
-        self.combo_kitsu_template.addItem("Cargando plantillas...")
+        self.combo_kitsu_template.addItem(self.tr("Loading templates..."))
         self.combo_kitsu_template.setEnabled(False)
         main_layout.addWidget(self.combo_kitsu_template)
         
@@ -116,7 +116,7 @@ class NewProjectWindow(QDialog):
         self.worker_kitsu_templates.data_ready.connect(self._on_kitsu_templates_loaded)
         self.worker_kitsu_templates.start()
 
-        lbl_version = QLabel("Versión de Blender Objetivo:")
+        lbl_version = QLabel(self.tr("Target Blender Version:"))
         lbl_version.setStyleSheet("font-weight: bold; margin-top: 10px;")
         main_layout.addWidget(lbl_version)
         
@@ -128,7 +128,7 @@ class NewProjectWindow(QDialog):
         self.combo_version.currentTextChanged.connect(self.dibujar_dependencias_dinamicas)
         main_layout.addWidget(self.combo_version)
 
-        lbl_addons = QLabel("Componentes de Bóveda (vault_manifest.json):")
+        lbl_addons = QLabel(self.tr("Vault Components (vault_manifest.json):"))
         lbl_addons.setStyleSheet("font-weight: bold; margin-top: 15px;")
         main_layout.addWidget(lbl_addons)
         
@@ -146,21 +146,21 @@ class NewProjectWindow(QDialog):
         if versiones:
             self.dibujar_dependencias_dinamicas(self.combo_version.currentText())
 
-        lbl_splash = QLabel("Splash Screen Personalizado (1000x500px):")
+        lbl_splash = QLabel(self.tr("Custom Splash Screen (1000x500px):"))
         lbl_splash.setStyleSheet("font-weight: bold; margin-top: 10px;")
         main_layout.addWidget(lbl_splash)
 
         splash_layout = QHBoxLayout()
         splash_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.btn_splash = QPushButton("Buscar PNG")
+        self.btn_splash = QPushButton(self.tr("Browse PNG"))
         self.btn_splash.setObjectName("SecondaryButton")
         self.btn_splash.setFixedSize(120, 35)
         self.btn_splash.setCursor(Qt.PointingHandCursor)
         self.btn_splash.clicked.connect(self.seleccionar_splash)
         splash_layout.addWidget(self.btn_splash)
 
-        self.lbl_splash_name = QLabel("Ninguna imagen")
+        self.lbl_splash_name = QLabel(self.tr("No image"))
         self.lbl_splash_name.setStyleSheet("color: #64748B; padding-left: 10px;")
         splash_layout.addWidget(self.lbl_splash_name, stretch=1)
         main_layout.addLayout(splash_layout)
@@ -170,7 +170,7 @@ class NewProjectWindow(QDialog):
         self.lbl_status.hide()
         main_layout.addWidget(self.lbl_status)
 
-        self.btn_crear = QPushButton("Generar Proyecto")
+        self.btn_crear = QPushButton(self.tr("Generate Project"))
         self.btn_crear.setObjectName("PrimaryButton")
         self.btn_crear.setFixedHeight(50)
         self.btn_crear.setCursor(Qt.PointingHandCursor)
@@ -178,7 +178,7 @@ class NewProjectWindow(QDialog):
         main_layout.addWidget(self.btn_crear)
 
         if not self.vault_data:
-            self.lbl_status.setText("⚠️ OPERACIÓN BLOQUEADA: Bóveda no inicializada.")
+            self.lbl_status.setText(self.tr("⚠️ OPERATION BLOCKED: Vault not initialized."))
             self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold; padding: 12px; background-color: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 6px;")
             self.lbl_status.show()
             self.entry_nombre.setEnabled(False)
@@ -196,7 +196,7 @@ class NewProjectWindow(QDialog):
         self.combo_kitsu_template.setEnabled(True)
 
     def seleccionar_splash(self):
-        ruta, _ = QFileDialog.getOpenFileName(self, "Seleccionar Splash Screen", "", "Imágenes PNG (*.png)")
+        ruta, _ = QFileDialog.getOpenFileName(self, self.tr("Select Splash Screen"), "", self.tr("PNG Images (*.png)"))
         if ruta:
             self.ruta_splash = ruta
             self.lbl_splash_name.setText(Path(ruta).name)
@@ -260,7 +260,7 @@ class NewProjectWindow(QDialog):
         kitsu_template = self.combo_kitsu_template.currentText().strip()
 
         if not nombre or not nombre.replace("-", "").replace("_", "").isalnum():
-            self.lbl_status.setText("Nombre inválido.")
+            self.lbl_status.setText(self.tr("Invalid name."))
             self.lbl_status.show()
             return
 
@@ -280,8 +280,8 @@ class NewProjectWindow(QDialog):
         pwd_vcs = vcs_config.get("vcs_password", "admin123")
 
         self.btn_crear.setEnabled(False)
-        self.btn_crear.setText("Creando...")
-        self.lbl_status.setText("Forjando estructura y conectando repositorios...")
+        self.btn_crear.setText(self.tr("Creating..."))
+        self.lbl_status.setText(self.tr("Forging structure and connecting repositories..."))
         self.lbl_status.setStyleSheet("color: #F59E0B; font-weight: bold;")
         self.lbl_status.show()
 
@@ -304,6 +304,6 @@ class NewProjectWindow(QDialog):
             self.close()
         else:
             self.btn_crear.setEnabled(True)
-            self.btn_crear.setText("Generar Proyecto")
+            self.btn_crear.setText(self.tr("Generate Project"))
             self.lbl_status.setText(mensaje)
             self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold;")

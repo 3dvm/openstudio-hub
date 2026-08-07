@@ -4,6 +4,7 @@ __pycache__/
 build/
 dist/
 *.spec
+*.bin
 tools/
 prompt_context.txt
 tests/dev_tools/kitsu_test_env.json

@@ -28,7 +28,9 @@ import http.server
 import socketserver
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, QUrl
+
+from PySide6.QtGui import QCloseEvent, QDesktopServices
 
 class WatchtowerLauncher(QObject):
 
@@ -109,7 +111,8 @@ class WatchtowerLauncher(QObject):
         """Levanta un SimpleHTTPRequestHandler y abre el navegador del OS."""
         if self.httpd:
             self.status_callback("Watchtower ya se encuentra en ejecución.", "green")
-            self.server_ready.emit(f"http://localhost:{self.httpd.server_address[1]}")
+            QDesktopServices.openUrl(QUrl(f"http://localhost:{self.httpd.server_address[1]}"))
+            # self.server_ready.emit(f"http://localhost:{self.httpd.server_address[1]}")
             return 
 
         port = self._get_free_port()
@@ -138,8 +141,8 @@ class WatchtowerLauncher(QObject):
             
             # Damos un pequeño respiro al socket antes de abrir el navegador
             time.sleep(1.0)
-            #webbrowser.open(f"http://localhost:{port}")
-            self.server_ready.emit(f"http://localhost:{port}")
+            QDesktopServices.openUrl(QUrl(f"http://localhost:{port}"))
+            #self.server_ready.emit(f"http://localhost:{port}")
 
         except OSError as e:
             self.status_callback(f"Watchtower: Fallo al enlazar el servidor local: {e}", "red")
